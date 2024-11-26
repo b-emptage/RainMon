@@ -174,7 +174,6 @@ class RainWatch(Tk.Frame):
         # logic for what to do under different wet conditions
         # if more than one sensor is wet or has recently dried, then close the dome immediately
         if self.wetSensorCount > 1 or self.wetSensorCount == 0:
-            print("ITS MORE THAN 1 OR 0")
             # send a message with the word 'close' which will close the dome
             self.TCP_send(f"Rain detected. {self.wetSensorCount:1d} sensors wet. Close command issued")
             self.timeoutDome(300000)  # times out any commands for 5 minutes
@@ -573,9 +572,11 @@ class RainWatch(Tk.Frame):
                 
                 # Check for a response if the socket is readable
                 if readable:
-                    response = self.c_socket.recv(1024)
+                    response = self.c_socket.recv(1024).decode()
                     if response:
-                        print(f'Host: {response.decode()}')
+                        print(f'Host: {response}')
+                    if "open" in response.lower():
+                        self.cancelDomeTimeout()
                     else:
                         # No data means the connection is closed
                         raise ConnectionResetError
@@ -729,7 +730,7 @@ if writeLog:
     loggerInstance.setLevel(logging.DEBUG)
     handler = CustomTimedRotatingFileHandler(
                             logName,
-                            when='H', #when="W6",
+                            when="W6",
                             interval=1,
                             backupCount=0,
                             delay=True
