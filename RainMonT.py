@@ -60,6 +60,10 @@ import logging.handlers
 #import io
 import time
 import win32com.client
+from pydub import AudioSegment
+from pydub.playback import play
+from queue import Queue
+import threading
 from math import log, exp
 #import pyttsx3
 #import pyttsx
@@ -131,7 +135,7 @@ class RainWatch(Tk.Frame):
                #and cancel scheduled Wet Alerts
                self.cancelWetAlert()
                try:
-                   speaker.Speak("Rain sensor Dry. ")
+                   speaker.speak_async("Rain sensor Dry. ")
                    #engine.say("Rain sensor Dry. ")
                    #engine.runAndWait()
                except:
@@ -144,7 +148,7 @@ class RainWatch(Tk.Frame):
            self.cancelWetAlert()
            if self.wetSensorCount>0: #only give alert if we have wet sensors
               try:
-                  speaker.Speak("Rain Detected. "+"{:1d} of {:1d} sensors wet".
+                  speaker.speak_async("Rain Detected. "+"{:1d} of {:1d} sensors wet".
                                     format(self.wetSensorCount,self.activeSensorCount))
                   #engine.say("Rain Detected. "+"{:1d} of {:1d} sensors wet".
                   #                  format(self.wetSensorCount,self.activeSensorCount))
@@ -683,13 +687,54 @@ for i in "0123":
     else:
         activeDetectors.append(False)
 
-speaker = win32com.client.Dispatch("SAPI.SpVoice")
-speaker.Rate= -3
 #engine = pyttsx3.init()
 #engine.setProperty('rate',140)
 #engine = pyttsx.init()
 #engine.setProperty('rate',140)
 
+class Speaker:
+    def __init__(self):
+        self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        self.speaker.Rate = -3
+        self.queue = Queue()
+        self.thread = threading.Thread(target=self._process_queue, daemon=True)
+        self.thread.start()
+
+    def _process_queue(self):
+        while True:
+            item = self.queue.get()
+            if item is None:  # Stop signal
+                break
+            try:
+                if isinstance(item, str):  # Text input
+                    self.speaker.Speak(item)
+                elif isinstance(item, dict) and item.get("type") == "audio":  # Audio input
+                    file_path = item.get("file_path")
+                    self._play_audio(file_path)
+                else:
+                    print(f"Invalid input to Speaker: {item}")
+            except Exception as e:
+                print(f"Error processing queue: {e}")
+
+    def _play_audio(self, file_path):
+        try:
+            audio = AudioSegment.from_file(file_path)
+            play(audio)
+        except Exception as e:
+            print(f"Error playing audio file {file_path}: {e}")
+
+    def speak_async(self, text):
+        #queue a text message for text-to-speech.
+        self.queue.put(text)
+
+    def play_audio_async(self, file_path):
+        # queue an audio file to play.
+        self.queue.put({"type": "audio", "file_path": file_path})
+
+    def shutdown(self):
+        #Shutdown the speaker system
+        self.queue.put(None)
+        self.thread.join()
 
 try:             
     f=open("RainMon.ini","r")
@@ -761,6 +806,7 @@ if not abort:
     #Set Window geometry and Title
     port.flushInput()
     port.writeTimeout=0.4
+    speaker = Speaker()
     myapp=RainWatch(activeDetectors,writeLog,tLogCount,msecs=1000)
     handler.setState(myapp.activeDetectors, myapp.currentStatus)
     logging.info("----- Logging Started -----")
