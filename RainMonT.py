@@ -541,7 +541,6 @@ class RainWatch(Tk.Frame):
         if self.TCP_connected:
             data = self.TCP_send('Connection from Rainmon.')
             if data:
-                data = data.decode()
                 print(f"Server: {data}")
             # check if the TCP server is active occasionally
             self.master.after(1000, self.TCP_check)
@@ -549,14 +548,13 @@ class RainWatch(Tk.Frame):
     def TCP_send(self, message):
         # send a packet via tcp to connected device. Does nothing if no tcp active
         if self.TCP_connected:
-            ready_to_read, ready_to_write, _ = select.select([self.c_socket],
-                                                             [], [], 1)
-            message = message.encode('utf-8')
             try:
-                self.c_socket.sendall(message)
+                self.c_socket.sendall(message.encode('utf-8'))
+                ready_to_read, ready_to_write, _ = select.select([self.c_socket],
+                                                             [], [], 1)
                 if ready_to_read:
                     response = self.c_socket.recv(1024)
-                    return response
+                    return response.decode()
             except BlockingIOError:
                 pass
             except Exception as e:
@@ -567,8 +565,10 @@ class RainWatch(Tk.Frame):
         if self.TCP_connected:
             try:
                 # Check if socket is writable (for send) and readable (for recv)
-                _, writable, _ = select.select([], [self.c_socket], [], 0)
-                readable, _, _ = select.select([self.c_socket], [], [], 0)
+                readable, writable, _ = select.select([self.c_socket],
+                                                      [self.c_socket],
+                                                      [],
+                                                      1)
                 
                 # Send a heartbeat if the socket is writable
                 if writable:
@@ -579,8 +579,8 @@ class RainWatch(Tk.Frame):
                     response = self.c_socket.recv(1024).decode()
                     if response:
                         print(f'Host: {response}')
-                    if "open" in response.lower():
-                        self.cancelDomeTimeout()
+                        if "open" in response.lower():
+                            self.cancelDomeTimeout()
                     else:
                         # No data means the connection is closed
                         raise ConnectionResetError
