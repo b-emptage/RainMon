@@ -179,11 +179,16 @@ class RainWatch(Tk.Frame):
         # if more than one sensor is wet or has recently dried, then close the dome immediately
         if self.wetSensorCount > 1 or self.wetSensorCount == 0:
             # send a message with the word 'close' which will close the dome
-            self.TCP_send(f"Rain detected. {self.wetSensorCount:1d} sensors wet. Close command issued")
-            self.timeoutDome(300000)  # times out any commands for 5 minutes
+            if not self.close_issued and self.TCP_connected:
+                self.TCP_send(f"Rain detected. {self.wetSensorCount:1d} sensors wet. Close command issued")
+            # Dome button goes blue when closed due to rain
+                if self.TCP_connected:
+                    self.dome_button.config(bg='Blue')
+                self.timeoutDome(300000)  # times out any commands for 5 minutes
         if self.wetSensorCount == 1:
-            self.after(10000, self.checkWetAndClose) 
-        # send a message with the word 'close' which will close the dome
+            if not self.close_issued:
+                # only check if close hasn't already been issued
+                self.after(10000, self.checkWetAndClose)
     
     def timeoutDome(self, duration):
         # sets close_issued to True so no more commands sent to dome controller
@@ -193,6 +198,9 @@ class RainWatch(Tk.Frame):
     def cancelDomeTimeout(self):
         # sets close_issued to False so commands can be sent to dome again
         self.close_issued = False
+        # Set dome button back to green 
+        if self.TCP_connected:
+            self.dome_button.config(bg='Green')
         
     def __init__(self,detectors,writeLog,tLogCount,msecs=1000):              # default = 1 second
         Tk.Frame.__init__(self)
@@ -305,6 +313,10 @@ class RainWatch(Tk.Frame):
         frameButtons = Tk.Frame(right_frame)
         frameButtons.grid(row=2, column=0, columnspan=3, pady=(10, 0))
         
+        # Reset button
+        self.reInitButton = Tk.Button(frameButtons, text="RESET", command=self.reInit)
+        self.reInitButton.pack(side=Tk.TOP, pady=2, expand=True)
+        
         # "DOME" button with status label below it
         self.dome_button = Tk.Button(frameButtons, text="DOME", command=self.dome_connect)
         self.dome_button.pack(side=Tk.TOP, pady=2, expand=True)
@@ -312,24 +324,7 @@ class RainWatch(Tk.Frame):
         # Status label below the "DOME" button
         self.dome_status = Tk.Label(frameButtons, text="")
         self.dome_status.pack(side=Tk.TOP, pady=2)
-        
-        # Reset button below the DOME button and status
-        self.reInitButton = Tk.Button(frameButtons, text="RESET", command=self.reInit)
-        self.reInitButton.pack(side=Tk.TOP, pady=2, expand=True)
-        
-        # New frame for entry field and send button
-        frameSendMessage = Tk.Frame(right_frame)
-        frameSendMessage.grid(row=3, column=0, columnspan=3, pady=(5, 0))
-        
-        # Entry field for TCP message input
-        self.message_entry = Tk.Entry(frameSendMessage, width=20)
-        self.message_entry.pack(side=Tk.LEFT, padx=5)
-        
-        # Button to send message via TCP
-        self.send_button = Tk.Button(frameSendMessage, text="Send", command=self.send_tcp_message)
-        self.send_button.pack(side=Tk.LEFT, padx=5)
-        
-        
+
         self.update_idletasks()
         self.probeDetectors(detectors)
         self.oldDetectorState = ""
@@ -338,13 +333,7 @@ class RainWatch(Tk.Frame):
         # close TCP connections on window close
         self.master.protocol("WM_DELETE_WINDOW", self.close_connection)
         self.repeater() #Start monitoring
-############V
-    def send_tcp_message(self):
-        message = self.message_entry.get()
-        if message:
-            self.TCP_send(message)  # Call your TCP send function with the message
-            self.message_entry.delete(0, Tk.END)  # Clear the entry field after sending
-############^
+
     def statusUpdate(self):
         for i in range(4):
             if self.activeDetectors[i]:
