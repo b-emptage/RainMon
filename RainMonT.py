@@ -52,6 +52,7 @@ import os
 
 #from Tkinter import *
 import tkinter as Tk
+from tkinter import ttk
 import serial
 import socket
 import select
@@ -183,7 +184,7 @@ class RainWatch(Tk.Frame):
                 self.TCP_send(f"Rain detected. {self.wetSensorCount:1d} sensors wet. Close command issued")
             # Dome button goes blue when closed due to rain
                 if self.TCP_connected:
-                    self.dome_button.config(bg='Blue')
+                    self.status_led.config(bg='Blue')
                 self.timeoutDome(300000)  # times out any commands for 5 minutes
         if self.wetSensorCount == 1:
             if not self.close_issued:
@@ -200,7 +201,7 @@ class RainWatch(Tk.Frame):
         self.close_issued = False
         # Set dome button back to green 
         if self.TCP_connected:
-            self.dome_button.config(bg='Green')
+            self.status_led.config(bg='Green')
         
     def __init__(self,detectors,writeLog,tLogCount,msecs=1000):              # default = 1 second
         Tk.Frame.__init__(self)
@@ -267,11 +268,15 @@ class RainWatch(Tk.Frame):
         
         # Right side frames
         right_frame = Tk.Frame(main_frame)
-        right_frame.grid(row=0, column=1, sticky="nw", padx=10)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=10)
+        
+        # Configure the main frame grid to ensure the right side stretches
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(1, weight=1)
         
         # Frame for status indicators (one per detector) and IDs
         frameStatus = Tk.Frame(right_frame)
-        frameStatus.grid(row=1, column=0, sticky="nsew")
+        frameStatus.grid(row=0, column=0, sticky="nsew")
         
         # Configure grid columns in frameStatus for equal width distribution
         for i in range(3):
@@ -309,21 +314,50 @@ class RainWatch(Tk.Frame):
             temp.grid(row=i + 1, column=2, padx=5, pady=5, sticky="nsew")
             self.temps.append(temp)
         
-        # Frame for buttons at the bottom of the right side
-        frameButtons = Tk.Frame(right_frame)
-        frameButtons.grid(row=2, column=0, columnspan=3, pady=(10, 0))
+        # Add the RESET button directly below the headers
+        frame_reset_button = Tk.Frame(frameStatus)
+        frame_reset_button.grid(row=6, column=0, columnspan=3, pady=(5, 5), sticky="nsew")
         
-        # Reset button
-        self.reInitButton = Tk.Button(frameButtons, text="RESET", command=self.reInit)
-        self.reInitButton.pack(side=Tk.TOP, pady=2, expand=True)
+        # RESET button inside frameStatus
+        self.reInitButton = Tk.Button(frame_reset_button, text="RESET", command=self.reInit)
+        self.reInitButton.pack(side=Tk.TOP, pady=5)
         
-        # "DOME" button with status label below it
-        self.dome_button = Tk.Button(frameButtons, text="DOME", command=self.dome_connect)
-        self.dome_button.pack(side=Tk.TOP, pady=2, expand=True)
+        # Frame for Dome button and status at the bottom
+        frameButtons = ttk.LabelFrame(right_frame, labelanchor="n", text="Dome Auto-Close", style="TLabelframe")
+        frameButtons.grid(row=1, column=0, pady=(0, 0), sticky="new")
         
-        # Status label below the "DOME" button
-        self.dome_status = Tk.Label(frameButtons, text="")
-        self.dome_status.pack(side=Tk.TOP, pady=2)
+        # Configure grid rows in the frameButtons to organize the widgets
+        frameButtons.grid_rowconfigure(0, weight=1)  # Connect/Disconnect buttons
+        frameButtons.grid_rowconfigure(1, weight=1)  # Status label and LED indicator
+        frameButtons.grid_rowconfigure(2, weight=1)  # Error label and Show Error button
+        
+        # Top row: Connect and Disconnect buttons
+        self.connect_button = Tk.Button(frameButtons, text="CONNECT", command=self.dome_connect)
+        self.connect_button.grid(row=0, column=0, padx=5, pady=(0, 5), sticky="ew")
+        
+        self.disconnect_button = Tk.Button(frameButtons, text="DISCONNECT", command=self.dome_disconnect)
+        self.disconnect_button.grid(row=0, column=1, padx=5, pady=(0, 5), sticky="ew")
+        
+        # Second row: Status label and LED indicator (representing status)
+        self.status_label = Tk.Label(frameButtons, text="Status", font=("CourierBold", 9))
+        self.status_label.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+        
+        # LED indicator (green = connected, red = disconnected, blue = close command from wet issued)
+        self.status_led = Tk.Label(frameButtons, text=" ", bg="#555555", width=2, height=1, relief=Tk.RAISED)
+        self.status_led.grid(row=1, column=1, padx=5, pady=5)
+        
+        # Third row: Error label and Show Error button
+        self.error_label = Tk.Label(frameButtons, text="Err?", font=("CourierBold", 9))
+        self.error_label.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
+        
+        # Show Error button (only enabled when there is an error)
+        self.error_button = Tk.Button(frameButtons, text="View", command=self.show_error, state="normal")
+        #self.error_button.grid(row=2, column=1, padx=5, pady=5)
+        
+        # Configure grid rows in the right frame to fill space properly
+        right_frame.grid_rowconfigure(0, weight=3)  # Status indicators take up remaining space
+        right_frame.grid_rowconfigure(1, weight=1)  # Place Dome control below the status
+
 
         self.update_idletasks()
         self.probeDetectors(detectors)
@@ -516,14 +550,16 @@ class RainWatch(Tk.Frame):
             self.c_socket.connect((controller_ip, controller_port))
             self.c_socket.setblocking(False)
             # make the dome button green if successful
-            self.dome_button.config(bg='Green')
-            self.dome_status.config(text="Dome Controller connected")
+            self.status_led.config(bg='Green')
+            self.error_message = None
+            self.error_button.grid_forget()
             self.TCP_connected = True
         except Exception as e:
             print(f"Connection Error: {e}")
             # make dome button red
-            self.dome_button.config(bg='Red')
-            self.dome_status.config(text="Dome Controller unavailable")
+            self.status_led.config(bg='Red')
+            self.error_message = f"{e}"
+            self.error_button.grid(row=2, column=1, padx=5, pady=5)
             self.TCP_connected = False
         
         # send some data to the server, checking if there is a response
@@ -533,6 +569,8 @@ class RainWatch(Tk.Frame):
                 print(f"Server: {data}")
             # check if the TCP server is active occasionally
             self.master.after(1000, self.TCP_check)
+    
+    
 
     def TCP_send(self, message):
         # send a packet via tcp to connected device. Does nothing if no tcp active
@@ -575,6 +613,8 @@ class RainWatch(Tk.Frame):
                         raise ConnectionResetError
     
                 # Schedule the next check
+                self.error_message = None
+                self.error_button.grid_forget()
                 self.master.after(10000, self.TCP_check)
             
             except Exception as e:
@@ -583,9 +623,12 @@ class RainWatch(Tk.Frame):
                 self.c_socket.close()
                 self.c_socket = None
                 self.TCP_connected = False
-                self.dome_button.config(bg='Red')
-                self.dome_status.config(text="Dome Controller unavailable")
-            
+                self.status_led.config(bg='Red')
+                self.error_message = f"{e}"
+                self.error_button.grid(row=2, column=1, padx=5, pady=5)
+    
+    def show_error(self):
+        Tk.messagebox.showerror("Error", self.error_message)
 
     def close_connection(self):
         # Close the socket when the window is closed
@@ -603,6 +646,20 @@ class RainWatch(Tk.Frame):
         Connects to the dome controller, if it is running on PlaneWave
         '''
         self.connect_TCP("127.0.0.1",1338)
+        
+    def dome_disconnect(self):
+        '''
+        Connects to the dome controller, if it is running on PlaneWave
+        '''
+        try:
+            if self.c_socket:
+                self.c_socket.close()
+                print("Socket closed.")
+                self.status_led.config(bg='#555555')
+                self.c_socket = None
+                self.TCP_connected = False
+        except Exception as e:
+            print(f"Error closing socket: {e}")
 
 ###############################################       
 def readPort():
@@ -680,6 +737,11 @@ for i in "0123":
 #engine.setProperty('rate',140)
 #engine = pyttsx.init()
 #engine.setProperty('rate',140)
+
+ttk.Style().theme_use('winnative')
+ttk.Style().configure('TLabelframe')
+ttk.Style().configure('TLabelframe.Label',font=("TkDefaultFont", 9, 'bold'))
+ttk.Style().configure('TLabel')
 
 class Speaker:
     def __init__(self):
