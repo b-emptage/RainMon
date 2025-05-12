@@ -679,7 +679,7 @@ def readPort():
         
 #if __name__ == '__main__': Alarm(msecs=3000).mainloop()
 
-
+# TODO: Fix rolling log
 class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
     # Extend the TimedRotatingFileHandler classs in logging.handlers to put
     # necessary header info into the log.
@@ -743,6 +743,7 @@ ttk.Style().configure('TLabelframe')
 ttk.Style().configure('TLabelframe.Label',font=("TkDefaultFont", 9, 'bold'))
 ttk.Style().configure('TLabel')
 
+#TODO: Fix speaking
 class Speaker:
     def __init__(self):
         self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
