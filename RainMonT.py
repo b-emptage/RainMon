@@ -606,7 +606,7 @@ class RainWatch(Tk.Frame):
                 if readable:
                     response = self.c_socket.recv(1024).decode()
                     if response:
-                        print(f'Host: {response}')
+                        #print(f'Host: {response}')
                         if "open" in response.lower():
                             self.cancelDomeTimeout()
                     else:
