@@ -690,8 +690,8 @@ class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
         self.initial_sensor_state = ""
     
     def setState(self, active_sensor_map, initial_sensor_state):
-        self.active_sensor_map = active_sensor_map
-        self.initial_sensor_state = ""
+        self.active_sensor_map = str(active_sensor_map)
+        self.initial_sensor_state = str(initial_sensor_state)
     
     def doRollover(self):
         # Perform the original rollover process
@@ -700,6 +700,7 @@ class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
             self.stream = None
         
         super().doRollover()
+        self.stream = self._open()
         
         # Write header information to the new log file
         if self.stream:  # Ensure the new log file is open
