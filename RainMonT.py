@@ -42,8 +42,8 @@ that the user has re-opened the dome
 
 
 import sys
-sys.path.insert(0,'C:/Python27/Lib')
-sys.path.insert(0,'C:/Python27/Lib/site-packages/win32') 
+#sys.path.insert(0,'C:/Python27/Lib')
+#sys.path.insert(0,'C:/Python27/Lib/site-packages/win32') 
 import os
 #sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 #sys.path.append(os.environ["USERPROFILE"]+'\Desktop\BT Telescope\Python\AutoGuider')
@@ -52,7 +52,7 @@ import os
 
 #from Tkinter import *
 import tkinter as Tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import serial
 import socket
 import select
@@ -629,7 +629,7 @@ class RainWatch(Tk.Frame):
                 self.error_button.grid(row=2, column=1, padx=5, pady=5)
     
     def show_error(self):
-        Tk.messagebox.showerror("Error", self.error_message)
+        messagebox.showerror("Error", self.error_message)
 
     def close_connection(self):
         # Close the socket when the window is closed
@@ -719,11 +719,19 @@ class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
 
 #change working directory to where the main program lives
 #print os.path.dirname(os.path.realpath(__file__))
-os.chdir(os.path.dirname(os.path.realpath(__file__)))
+if getattr(sys, 'frozen', False):
+    # If running as a bundled executable
+    base_path = sys._MEIPASS
+else:
+    # If running as a script
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
+os.chdir(os.path.dirname(sys.executable))  # Use the folder where the .exe is located
+
 
 #process settings from the RainMon.ini file, if it exists
-portname = 'COM31'
-writeLog="0"
+portname = 'COM7'
+writeLog="1"
 abort=0
 debug = False
 detectors="0123"  #Active detectors, all by default, override with active= in rainmon.ini
@@ -792,8 +800,10 @@ class Speaker:
         self.queue.put(None)
         self.thread.join()
 
-try:             
-    f=open("RainMon.ini","r")
+try:   
+    ini_path = os.path.join(os.path.dirname(sys.executable), "RainMon.ini")
+    print("Looking for  RainMon.ini in: ", ini_path)  
+    f = open(ini_path, "r")
     ini=f.read()
     f.close()
     for i in ini.split("\n"):
@@ -812,13 +822,17 @@ try:
                     debug = True 
                 else:
                     debug = False
-except:
-    print("RainMon.ini error")
+except Exception as e:
+    print(f"RainMon.ini error: {e}")
     #print sys.exc_info()
 if (writeLog == "1") or (writeLog.upper() == "TRUE"):
     writeLog = True
+    log_dir = os.path.join(base_path, "RainMonLogs")
     logName = "RainMonT-{}.log".format(time.strftime("%Y%m%d_%H%M"))
     logName="RainMonT.log"  #The current log has no date or extension.
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    logName = os.path.join(log_dir, "RainMonT.log")
 else:
     writeLog=False
 
@@ -854,7 +868,7 @@ try:
 except: 
    top= Tk.Tk()
    top.withdraw()
-   Tk.messagebox.showinfo("RainMon Starup Error", "Couldn't open COM port '{}'.\n Check RainMon.ini".format(portname))
+   messagebox.showinfo("RainMon Starup Error", "Couldn't open COM port '{}'.\n Check RainMon.ini".format(portname))
    abort=1  #Quit after the error message has been acknowledged
    top.destroy()
    
@@ -864,10 +878,12 @@ if not abort:
     port.writeTimeout=0.4
     speaker = Speaker()
     myapp=RainWatch(activeDetectors,writeLog,tLogCount,msecs=1000)
-    handler.setState(myapp.activeDetectors, myapp.currentStatus)
-    logging.info("----- Logging Started -----")
-    logging.info("Active Sensor map: " + str(myapp.activeDetectors))
-    logging.info("Initial sensor state: " + "".join(myapp.currentStatus) + " " + ",".join(myapp.currentTemp))
+    if writeLog:
+        handler.setState(myapp.activeDetectors, myapp.currentStatus)
+        logging.info("----- Logging Started -----")
+        logging.info("Active Sensor map: " + str(myapp.activeDetectors))
+        logging.info("Initial sensor state: " + "".join(myapp.currentStatus) + " " + ",".join(myapp.currentTemp))
+        print("Logging to: ", logName)
     myapp.master.title("RainWatch v0.3")
     myapp.configure(background=C_GRAY)
     #myapp.master.maxsize(200, 500)
