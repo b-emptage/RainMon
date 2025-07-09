@@ -109,6 +109,13 @@ def decodeMK3(s):
     
 class RainWatch(Tk.Frame):
     STATUS_PREFIX ="*BISDEE RAIN SENSOR "
+
+    # sets directory depending on whether run as a .exe or .py
+    if getattr(sys, 'frozen', False):
+        image_path = os.path.join(sys._MEIPASS, "BT_SiteVectorMap.png")
+    else:
+        image_path = os.path.join(os.path.dirname(__file__), "BT_SiteVectorMap.png")
+
     
     def schedTlog(self):
         self.logTNow = True
@@ -245,7 +252,7 @@ class RainWatch(Tk.Frame):
         
         # Load map image
         try:
-            self.map_photo = Tk.PhotoImage(file="./BT_SiteVectorMap.png")
+            self.map_photo = Tk.PhotoImage(file=self.image_path)
             self.canvas.create_image(0, 0, anchor=Tk.NW, image=self.map_photo)
         except Exception as e:
             print(f"Error loading image: {e}")
@@ -722,6 +729,7 @@ class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
 if getattr(sys, 'frozen', False):
     # If running as a bundled executable
     base_path = sys._MEIPASS
+    base_dir = os.path.dirname(sys.executable)
 else:
     # If running as a script
     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -827,7 +835,7 @@ except Exception as e:
     #print sys.exc_info()
 if (writeLog == "1") or (writeLog.upper() == "TRUE"):
     writeLog = True
-    log_dir = os.path.join(base_path, "RainMonLogs")
+    log_dir = os.path.join(base_dir, "RainMonLogs")
     logName = "RainMonT-{}.log".format(time.strftime("%Y%m%d_%H%M"))
     logName="RainMonT.log"  #The current log has no date or extension.
     if not os.path.exists(log_dir):
