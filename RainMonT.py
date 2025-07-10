@@ -701,6 +701,9 @@ class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
         self.initial_sensor_state = str(initial_sensor_state)
     
     def doRollover(self):
+        # shortcut strings
+        asm = "Active Sensor Map: "
+        iss = "Initial Sensor State: "
         # Perform the original rollover process
         if self.stream:
             self.stream.close()
@@ -713,9 +716,9 @@ class CustomTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
         if self.stream:  # Ensure the new log file is open
             self.stream.write("----- Logging Started -----\n")
             if self.active_sensor_map:
-                self.stream.write(self.active_sensor_map + "\n")
+                self.stream.write(asm + self.active_sensor_map + "\n")
             if self.initial_sensor_state:
-                self.stream.write(self.initial_sensor_state + "\n")
+                self.stream.write(iss + self.initial_sensor_state + "\n")
             self.stream.flush()
 
 #############  Main #################################
@@ -763,14 +766,18 @@ ttk.Style().configure('TLabel')
 
 class Speaker:
     def __init__(self):
-        self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
-        self.speaker.Rate = -3
         self.queue = Queue()
         self.thread = threading.Thread(target=self._process_queue, daemon=True)
         self.thread.start()
 
     def _process_queue(self):
         pythoncom.CoInitialize()
+        try:
+            self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            self.speaker.Rate = -3
+        except Exception as e:
+            self.speaker = None
+            print(f"Failed to initialize SAPI.SpVoice: {e}")
         while True:
             item = self.queue.get()
             if item is None:  # Stop signal
@@ -784,7 +791,8 @@ class Speaker:
                 else:
                     print(f"Invalid input to Speaker: {item}")
             except Exception as e:
-                print(f"Error processing queue: {e}")
+                print(f"[{time.strftime('%H:%M:%S')}] "
+                      + f"Error playing audio file {file_path}: {e}")
             finally:
                 pythoncom.CoUninitialize()
 
@@ -793,7 +801,8 @@ class Speaker:
             audio = AudioSegment.from_file(file_path)
             play(audio)
         except Exception as e:
-            print(f"Error playing audio file {file_path}: {e}")
+            print(f"[{time.strftime('%H:%M:%S')}] "
+                  + f"Error playing audio file {file_path}: {e}")
 
     def speak_async(self, text):
         #queue a text message for text-to-speech.
