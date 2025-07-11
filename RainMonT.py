@@ -742,6 +742,8 @@ os.chdir(os.path.dirname(sys.executable))  # Use the folder where the .exe is lo
 
 #process settings from the RainMon.ini file, if it exists
 portname = 'COM7'
+port = None
+speaker = None
 writeLog="1"
 abort=0
 debug = False
@@ -764,37 +766,42 @@ ttk.Style().configure('TLabelframe')
 ttk.Style().configure('TLabelframe.Label',font=("TkDefaultFont", 9, 'bold'))
 ttk.Style().configure('TLabel')
 
+
 class Speaker:
     def __init__(self):
+        self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        self.speaker.Rate = -3
         self.queue = Queue()
         self.thread = threading.Thread(target=self._process_queue, daemon=True)
         self.thread.start()
 
     def _process_queue(self):
         pythoncom.CoInitialize()
-        try:
-            self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
-            self.speaker.Rate = -3
-        except Exception as e:
-            self.speaker = None
-            print(f"Failed to initialize SAPI.SpVoice: {e}")
         while True:
             item = self.queue.get()
             if item is None:  # Stop signal
                 break
+    
+            file_path = None  # Ensure it's always defined
             try:
                 if isinstance(item, str):  # Text input
-                    self.speaker.Speak(item)
+                    if self.speaker:
+                        self.speaker.Speak(item)
+                    else:
+                        print(f"[{time.strftime('%H:%M:%S')}] "+
+                              "Speaker not initialized. Skipping speech.")
                 elif isinstance(item, dict) and item.get("type") == "audio":  # Audio input
                     file_path = item.get("file_path")
-                    self._play_audio(file_path)
+                    if file_path:
+                        self._play_audio(file_path)
+                    else:
+                        print("No audio file provided, skipping play.")
                 else:
                     print(f"Invalid input to Speaker: {item}")
             except Exception as e:
-                print(f"[{time.strftime('%H:%M:%S')}] "
-                      + f"Error playing audio file {file_path}: {e}")
-            finally:
-                pythoncom.CoUninitialize()
+                print(f"[{time.strftime('%H:%M:%S')}] "+
+                      f"Error processing item: {e}")
+        pythoncom.CoUninitialize()
 
     def _play_audio(self, file_path):
         try:
@@ -816,6 +823,71 @@ class Speaker:
         #Shutdown the speaker system
         self.queue.put(None)
         self.thread.join()
+
+# old speaker class that didnt work with remote sessions, keeping in case.
+# class Speaker:
+#     def __init__(self):
+#         self.queue = Queue()
+#         self.thread = threading.Thread(target=self._process_queue, daemon=True)
+#         self.thread.start()
+
+#     def _process_queue(self):
+#         pythoncom.CoInitialize()
+#         try:
+#             self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+#             self.speaker.Rate = -3
+#         except Exception as e:
+#             self.speaker = None
+#             print(f"Failed to initialize SAPI.SpVoice: {e}")
+    
+#         while True:
+#             item = self.queue.get()
+#             if item is None:  # Stop signal
+#                 break
+    
+#             file_path = None  # Ensure it's always defined
+#             try:
+#                 if isinstance(item, str):  # Text input
+#                     if self.speaker:
+#                         self.speaker.Speak(item)
+#                     else:
+#                         print(f"[{time.strftime('%H:%M:%S')}] "+
+#                               "Speaker not initialized. Skipping speech.")
+#                 elif isinstance(item, dict) and item.get("type") == "audio":  # Audio input
+#                     file_path = item.get("file_path")
+#                     if file_path:
+#                         self._play_audio(file_path)
+#                     else:
+#                         print("No audio file provided, skipping play.")
+#                 else:
+#                     print(f"Invalid input to Speaker: {item}")
+#             except Exception as e:
+#                 print(f"[{time.strftime('%H:%M:%S')}] "+
+#                       f"Error processing item: {e}")
+#             finally:
+#                 pythoncom.CoUninitialize()
+
+
+#     def _play_audio(self, file_path):
+#         try:
+#             audio = AudioSegment.from_file(file_path)
+#             play(audio)
+#         except Exception as e:
+#             print(f"[{time.strftime('%H:%M:%S')}] "
+#                   + f"Error playing audio file {file_path}: {e}")
+
+#     def speak_async(self, text):
+#         #queue a text message for text-to-speech.
+#         self.queue.put(text)
+
+#     def play_audio_async(self, file_path):
+#         # queue an audio file to play.
+#         self.queue.put({"type": "audio", "file_path": file_path})
+
+#     def shutdown(self):
+#         #Shutdown the speaker system
+#         self.queue.put(None)
+#         self.thread.join()
 
 try:   
     ini_path = os.path.join(os.path.dirname(sys.executable), "RainMon.ini")
@@ -901,7 +973,7 @@ if not abort:
         logging.info("Active Sensor map: " + str(myapp.activeDetectors))
         logging.info("Initial sensor state: " + "".join(myapp.currentStatus) + " " + ",".join(myapp.currentTemp))
         print("Logging to: ", logName)
-    myapp.master.title("RainWatch v0.3")
+    myapp.master.title("RainWatch v1.0")
     myapp.configure(background=C_GRAY)
     #myapp.master.maxsize(200, 500)
     #myapp.master.minsize(200,100)
@@ -909,5 +981,8 @@ if not abort:
     # start the program
     myapp.focus_set()
     myapp.mainloop()
-port.close()
+if port:
+    port.close()
+if speaker:
+    speaker.shutdown()
 print("Finished.")
