@@ -1,0 +1,6 @@
+# Development and test dependencies. Not needed on either deployed machine.
+#
+# The tests are hardware-free and standard-library only apart from pytest: the
+# serial port is faked, and the multicast tooling is exercised in-process.
+
+pytest>=6.0
