@@ -289,6 +289,13 @@ class WindMonitor(object):
         # exactly the error it exists to remove.
         if all(s[3] == REFERENCE_TRUE for s in window):
             return mean % 360.0
+
+        # NEGATIVE OFFSETS ARE FINE, and the modulo is what makes them fine.
+        # Python's % with a positive divisor always returns a non-negative
+        # result -- -20.0 % 360.0 is 340.0 -- unlike C, Java or JavaScript,
+        # where it would stay -20.0. Anyone porting this expression, or
+        # "simplifying" the modulo away because the inputs look bounded, will
+        # reintroduce a negative bearing that ASCOM does not allow.
         return (mean + self._config.wind_north_offset_deg) % 360.0
 
     def direction_scatter_deg(self, now):

@@ -12,7 +12,8 @@ Arcsecond stores m/s, so a second unit anywhere is a threshold waiting to be
 wrong by a factor of 3.6.
 """
 
-from typing import Optional
+import math
+from typing import List, Optional
 
 KMH_PER_MS = 3.6
 
@@ -67,10 +68,33 @@ class WeatherConfig(object):
         # legacy display used the same 1 m/s cut.
         self.wind_direction_min_speed_ms = wind_direction_min_speed_ms
 
+        # Anything the configuration got wrong but that is not worth refusing to
+        # start over. Logged at startup by the weather service.
+        self.warnings = []                          # type: List[str]
+
         # PROVISIONAL. The legacy display adds 30 degrees to the raw direction,
         # with no note saying why -- presumably a mounting correction. It is
         # carried forward so behaviour does not change silently, but it must be
         # checked against a known reference before WindDirection is trusted.
+        #
+        # Negative values are legitimate and work correctly: the bearing is
+        # wrapped with a modulo, which in Python always yields [0, 360).
+        #
+        # A NON-FINITE value is not legitimate, and its consequence is out of
+        # all proportion to the mistake. NaN would propagate into WindDirection,
+        # and json.dumps writes NaN as the bare literal `NaN`, which is not
+        # valid JSON -- so one bad number here would break every strict Alpaca
+        # client's parsing of the WHOLE response, not merely this property.
+        #
+        # It is neutralised rather than fatal because wind direction feeds no
+        # safety rule whatsoever. Refusing to start the service that closes the
+        # dome, over a cosmetic bearing offset, would be the wrong trade.
+        if not math.isfinite(wind_north_offset_deg):
+            self.warnings.append(
+                'wind_north_offset_deg was {!r}, which is not a finite number. '
+                'Using 0 instead. WindDirection will be the raw instrument '
+                'bearing, uncorrected.'.format(wind_north_offset_deg))
+            wind_north_offset_deg = 0.0
         self.wind_north_offset_deg = wind_north_offset_deg
 
         # There used to be configurable field indices here, because nobody had

@@ -342,3 +342,92 @@ class TestAgainstTheRealCapture:
         # It was a windy quarter of an hour: about 6.4 m/s mean, gusting to 12.6.
         assert 1.0 < min(speeds) < 5.0
         assert 8.0 < max(speeds) < 20.0
+
+
+class TestNegativeAndOddNorthOffsets:
+    """A negative offset is legitimate, and works.
+
+    The question is worth asking because the answer depends on a language
+    property that is not universal: Python's `%` with a positive divisor always
+    returns a non-negative result, so -20.0 % 360.0 is 340.0. In C, Java or
+    JavaScript the same expression yields -20.0, and ASCOM does not permit a
+    negative bearing.
+    """
+
+    def measured(self, offset, raw_angle=90.0):
+        config = WeatherConfig(wind_north_offset_deg=offset,
+                               wind_direction_min_speed_ms=1.0)
+        monitor = W.WindMonitor(config)
+        now = 0.0
+        for _ in range(15):
+            monitor.update(now, mwv_datagram(angle=raw_angle, speed=5.0))
+            now += 1.0
+        return monitor.direction_deg(now)
+
+    def test_a_negative_offset_rotates_the_right_way(self):
+        assert self.measured(-30.0, raw_angle=90.0) == pytest.approx(60.0, abs=0.1)
+
+    def test_a_negative_offset_wraps_past_north(self):
+        # 5 deg with a -30 offset is 335, not -25.
+        assert self.measured(-30.0, raw_angle=5.0) == pytest.approx(335.0, abs=0.1)
+
+    @pytest.mark.parametrize('offset', [
+        -720.0, -390.0, -180.0, -30.0, -0.5, 0.0, 30.0, 359.0, 400.0, 720.0])
+    @pytest.mark.parametrize('raw', [0.0, 5.0, 90.0, 180.0, 273.0, 355.0, 360.0])
+    def test_the_result_is_always_a_legal_bearing(self, offset, raw):
+        # ASCOM requires 0-360, and a client slaving a dome to this would do
+        # something surprising with a negative one.
+        assert 0.0 <= self.measured(offset, raw_angle=raw) < 360.0
+
+    def test_an_offset_beyond_a_full_turn_is_equivalent_to_its_remainder(self):
+        assert self.measured(-390.0) == pytest.approx(self.measured(-30.0), abs=0.1)
+        assert self.measured(400.0) == pytest.approx(self.measured(40.0), abs=0.1)
+
+    def test_the_offset_does_not_touch_the_scatter(self):
+        # Scatter is rotation invariant, so the offset has no business in it.
+        config = WeatherConfig(wind_north_offset_deg=-137.0,
+                               wind_direction_min_speed_ms=1.0)
+        monitor = W.WindMonitor(config)
+        now = 0.0
+        for angle in (85.0, 90.0, 95.0) * 5:
+            monitor.update(now, mwv_datagram(angle=angle, speed=5.0))
+            now += 1.0
+        assert monitor.direction_scatter_deg(now) > 0.0
+        assert monitor.direction_scatter_deg(now) < 30.0
+
+
+class TestNonFiniteNorthOffset:
+    """NaN would reach the wire as the bare literal `NaN`, which is not valid
+    JSON -- breaking every strict Alpaca client's parsing of the whole
+    response, not just this one property."""
+
+    @pytest.mark.parametrize('offset', [float('nan'), float('inf'),
+                                        float('-inf')])
+    def test_a_non_finite_offset_is_neutralised(self, offset):
+        config = WeatherConfig(wind_north_offset_deg=offset)
+        assert config.wind_north_offset_deg == 0.0
+        assert config.warnings
+
+    def test_it_warns_rather_than_refusing_to_start(self):
+        # Wind direction feeds no safety rule. Refusing to run the service that
+        # closes the dome, over a cosmetic bearing offset, would be the wrong
+        # trade.
+        config = WeatherConfig(wind_north_offset_deg=float('nan'))
+        assert 'not a finite number' in config.warnings[0]
+
+    def test_a_sane_offset_produces_no_warning(self):
+        assert WeatherConfig(wind_north_offset_deg=-30.0).warnings == []
+
+    def test_the_published_direction_stays_json_safe(self):
+        import json
+        import math
+        config = WeatherConfig(wind_north_offset_deg=float('nan'),
+                               wind_direction_min_speed_ms=1.0)
+        monitor = W.WindMonitor(config)
+        now = 0.0
+        for _ in range(15):
+            monitor.update(now, mwv_datagram(angle=90.0, speed=5.0))
+            now += 1.0
+        direction = monitor.direction_deg(now)
+        assert math.isfinite(direction)
+        assert json.loads(json.dumps(direction)) == direction

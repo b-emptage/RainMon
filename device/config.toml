@@ -55,6 +55,11 @@ wind_speed_field = 4
 # presumably a mounting correction. Carried forward so behaviour does not
 # change silently. DO NOT TRUST WindDirection until this has been checked
 # against a known reference.
+#
+# Negative values are fine: the bearing wraps, so -30 and 330 are the same
+# correction. The value must be a finite number -- a NaN or an infinity is
+# ignored with a loud startup message, because it would otherwise reach the
+# wire as invalid JSON and break every Alpaca client reading this device.
 wind_north_offset_deg = 30.0
 
 # --- rain ---

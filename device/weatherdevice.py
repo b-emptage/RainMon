@@ -178,6 +178,8 @@ class GreenhillWeather(object):
         self._thread.start()
         self._logger.info('==WEATHER== monitoring started. %s',
                           self._config.describe_wind_thresholds())
+        for warning in getattr(self._config, 'warnings', ()):
+            self._logger.error('==CONFIG== %s', warning)
         self._start_dome_closer()
 
     def _start_dome_closer(self):
