@@ -35,6 +35,7 @@ from greenhill import rain_protocol
 from greenhill.core.dome_client import AlpacaDomeClient, DomeCloser
 from greenhill.core.receiver import MulticastReader
 from greenhill.core.safety import SafetyEvaluator
+from greenhill.core.wind import nmea_checksum
 
 # AlpycaDevice's "Exception" classes are NOT Python exceptions -- they are
 # plain response-payload objects, constructed and handed to PropertyResponse.
@@ -100,6 +101,20 @@ _RAIN_SENSORS = ('RainRate', 'Temperature')
 # changed when data arrived could never notice data NOT arriving, which is the
 # failure this whole system exists to catch.
 EVALUATION_INTERVAL_S = 1.0
+
+# A calm, valid anemometer datagram in the real wire shape: the proprietary UDP
+# wrapper, an NMEA 0183 TAG block, then an MWV sentence with a correct checksum.
+# Simulated mode feeds this so it drives the SAME parse path the live instrument
+# does -- wrapper stripping, checksum verification, unit conversion -- rather
+# than a convenient shortcut that could let Conform pass while the real parser
+# was broken. 2 m/s from 090 degrees is dry and calm, below every threshold.
+# Assembled from the sentence body so the checksum can never drift out of step
+# with the fields.
+_SIMULATED_WIND_WRAPPER = 'UdPbC\x00\\s:D383P1,s:WI4383*23\\'
+_SIMULATED_WIND_BODY = 'WIMWV,90.0,R,002.00,M,A'
+_SIMULATED_WIND_DATAGRAM = '{}${}*{:02X}'.format(
+    _SIMULATED_WIND_WRAPPER, _SIMULATED_WIND_BODY,
+    nmea_checksum(_SIMULATED_WIND_BODY))
 
 
 class GreenhillWeather(object):
@@ -286,7 +301,7 @@ class GreenhillWeather(object):
                 [rain_protocol.Detector(name, 'D', 12.0)
                  for name in ('H127', 'H50', 'ACC')],
                 True))
-            self._evaluator.wind.update(now, '$WIMWV,x,90.0,R,2.0,M,A')
+            self._evaluator.wind.update(now, _SIMULATED_WIND_DATAGRAM)
             state = self._evaluator.update(now)
             with self._lock:
                 self._state = state
@@ -378,17 +393,21 @@ class GreenhillWeather(object):
     def set_average_period(self, hours):
         # type: (float) -> None
         """The averaging window is fixed by the safety rules, so this accepts
-        only the value it already reports.
+        only 0.0 and the value it already reports.
 
-        Rejected rather than silently ignored: a client that asked for a
-        different averaging period and was told "fine" would go on to read
-        numbers that are not what it asked for.
+        ASCOM defines a write of 0.0 as "report the current values", and a
+        conformant driver MUST always accept it; we already report current
+        values, so it is a no-op here. Any OTHER period is rejected rather than
+        silently ignored: a client that asked for a different averaging period
+        and was told "fine" would go on to read numbers that are not what it
+        asked for.
         """
-        if abs(hours - self.average_period_hours) > 1e-6:
-            raise SettingNotAdjustable(
-                'AveragePeriod is fixed at {:.6f} h ({:.0f} s) by the safety '
-                'configuration and cannot be changed through Alpaca.'.format(
-                    self.average_period_hours, self._config.wind_mean_window_s))
+        if hours == 0.0 or abs(hours - self.average_period_hours) <= 1e-6:
+            return
+        raise SettingNotAdjustable(
+            'AveragePeriod is fixed at {:.6f} h ({:.0f} s) by the safety '
+            'configuration and cannot be changed through Alpaca.'.format(
+                self.average_period_hours, self._config.wind_mean_window_s))
 
     def time_since_last_update(self, sensor_name):
         # type: (str) -> float

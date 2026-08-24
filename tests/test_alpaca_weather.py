@@ -221,6 +221,27 @@ class TestObservingConditions:
         assert body['ErrorNumber'] == INVALID_VALUE
         assert 'fixed' in body['ErrorMessage']
 
+    def test_average_period_accepts_the_ascom_zero_reset(self, client):
+        # ASCOM defines a write of 0.0 as "report the current values", which a
+        # conformant driver MUST always accept. Rejecting it is what failed the
+        # ObservingConditions conformance job.
+        assert put(client, OC + 'averageperiod',
+                   {'AveragePeriod': '0.0'}).json['ErrorNumber'] == 0
+
+    def test_simulated_wind_datagram_yields_a_reading(self):
+        # The simulated feed must drive the REAL parser. A sentence whose fields
+        # are shifted (a stray leading field) parses to nothing, so WindSpeed,
+        # WindGust and WindDirection never get a value and the device fails
+        # ObservingConditions conformance -- which is exactly what happened when
+        # the parser was rewritten and this feed was not updated with it.
+        from greenhill.core.config import WeatherConfig
+        from greenhill.core.wind import WindMonitor
+        from weatherdevice import _SIMULATED_WIND_DATAGRAM
+
+        wind = WindMonitor(WeatherConfig())
+        assert wind.update(0.0, _SIMULATED_WIND_DATAGRAM) is True
+        assert wind.mean_speed_ms(0.0) is not None
+
     def test_sensor_descriptions_are_published(self, client):
         for sensor in ('WindSpeed', 'WindGust', 'WindDirection', 'Temperature',
                        'RainRate'):
