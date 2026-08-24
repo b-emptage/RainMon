@@ -13,3 +13,4 @@ dist/
 capture.jsonl
 *.capture.jsonl
 *-capture.jsonl
+.DS_Store
