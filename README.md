@@ -13,6 +13,8 @@ Two machines:
   `ObservingConditions` and `SafetyMonitor` over Alpaca.
   See [docs/SAFETY.md](docs/SAFETY.md), [docs/ALPACA.md](docs/ALPACA.md) and
   [docs/DOME_CLOSE.md](docs/DOME_CLOSE.md).
+* **Arcsecond** — polls both devices and runs its own close procedure as a
+  backup. See [docs/ARCSECOND_SETUP.md](docs/ARCSECOND_SETUP.md).
 
 On a NOGO the dome is closed by two independent routes: directly, by an Alpaca
 client against the dome server (~1–2 s), and by Arcsecond's own safety
@@ -36,7 +38,7 @@ phase plan.
 | 2 | Fusion, latching and watchdogs (Win11) | **done** |
 | 3 | Alpaca server: ObservingConditions + SafetyMonitor | **done** |
 | 4 | Route 1: direct dome close | **done** |
-| 5 | Arcsecond registration and condition set | next |
+| 5 | Arcsecond registration and condition set | **backend done**, site config pending |
 | 6 | UI and speaker relocated; `RainMonT.exe` retired | |
 
 ## Legacy

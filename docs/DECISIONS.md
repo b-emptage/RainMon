@@ -287,3 +287,45 @@ the README and the safety document say. The consequence the observatory should
 expect: **restarting the weather service closes the dome**, because it comes up
 having not yet seen the sky. That is the design working, not a fault, but it is
 disruptive if unexpected.
+## Phase 5 — Arcsecond (backend done, site configuration pending)
+
+**The three holes in Arcsecond's own safety evaluator are fixed**, on the
+`safety-fail-closed` branch of `arcsecond-back`. The first of them mattered
+most: an unreachable sensor wrote a weather reading with no values, the
+evaluator skipped conditions it could not evaluate, and with nothing triggered
+the answer was GO — so a sensor failure was indistinguishable from good weather.
+Live outdoor readings now fail closed. Readings also expire after five minutes,
+where before the newest row counted as current however old it was. And
+`site__is_safe` now exists, so a SafetyMonitor can actually stop the
+observatory; until now one was polled, stored, and never consulted.
+
+**One condition, not four.** The recommended Greenhill set is a single
+`site__is_safe Smaller 1`. The SafetyMonitor has already fused rain, wind,
+sensor health and stream staleness, so restating those thresholds in Arcsecond
+would put the same numbers in two places that can drift — and the local copy is
+the one that also drives the direct close, so a drift would have the two routes
+disagreeing about when to close.
+
+**The anemometer was captured, and it changed the wind code.** Fifteen minutes
+of real traffic showed the instrument is an Observator OMC-140 sending NMEA MWV
+inside a proprietary wrapper. **The parser built on assumption would have
+rejected every single datagram** — it would have left wind permanently unknown
+and the site permanently unsafe. Nothing short of real traffic would have found
+that. The sentence is now parsed as NMEA, so units and validity are read from
+the packet rather than assumed, and the north offset is applied only to the
+relative bearing it was meant for.
+
+The rain stream over the same window was flawless: 893 packets, no gaps, all
+three detectors reporting dry.
+
+**Open, and the observatory's to settle: the wind thresholds.** Against 20 km/h
+sustained and 30 km/h gust, the site would have been NOGO for that entire
+quarter of an hour — over the sustained limit in 95% of evaluations and the
+gust limit in 88%. Either it was genuinely that windy, or the limits are too
+tight for an exposed ridge. Everything else about the wind path is verified;
+only the two numbers are open.
+
+**Still to do:** register the two devices in arcsecond-local and build the
+condition set (a checklist is in `docs/ARCSECOND_SETUP.md`), confirm the north
+offset against a known reference, and do a dry-run close before arming the
+direct route.
