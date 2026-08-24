@@ -59,7 +59,7 @@ def format_state(now, state):
 def run_replay(path, config, verbose):
     """Feed a capture file through the evaluator using its recorded timings."""
     evaluator = SafetyEvaluator(config)
-    counts = {'rain': 0, 'wind': 0, 'rejected': 0}
+    counts = {'rain': 0, 'wind': 0, 'rejected': 0, 'ignored': 0}
     now = 0.0
     last_report = -1e9
     transitions = []
@@ -86,8 +86,13 @@ def run_replay(path, config, verbose):
                     evaluator.rain.update(now, packet)
                     counts['rain'] += 1
             elif stream == 'wind' and 'text' in record:
+                before = evaluator.wind.ignored_count
                 if evaluator.wind.update(now, record['text']):
                     counts['wind'] += 1
+                elif evaluator.wind.ignored_count > before:
+                    # Not a wind sentence at all -- the instrument's periodic
+                    # $WIVER identification. Normal traffic, not a fault.
+                    counts['ignored'] += 1
                 else:
                     counts['rejected'] += 1
 
@@ -102,8 +107,10 @@ def run_replay(path, config, verbose):
                 print(format_state(now, state))
 
     print('')
-    print('replayed {:.0f}s: {} rain packets, {} wind sentences, {} rejected'.format(
-        now, counts['rain'], counts['wind'], counts['rejected']))
+    print('replayed {:.0f}s: {} rain packets, {} wind sentences, '
+          '{} non-wind datagrams ignored, {} rejected'.format(
+              now, counts['rain'], counts['wind'], counts['ignored'],
+              counts['rejected']))
     print('{} safety transitions'.format(len(transitions)))
     if not transitions:
         print('NOTE: the verdict never changed. On a capture that starts from '

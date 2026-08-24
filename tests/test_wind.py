@@ -16,10 +16,12 @@ from greenhill.core import wind as W  # noqa: E402
 from greenhill.core.config import WeatherConfig  # noqa: E402
 
 
+from conftest import mwv_datagram, ver_datagram  # noqa: E402
+
+
 def sentence(direction, speed):
-    """A sentence in the shape the legacy display expects: direction at field
-    2, speed at field 4."""
-    return '$WIMWV,x,{},R,{},M,A'.format(direction, speed)
+    """A real anemometer datagram: wrapper, TAG block, MWV sentence."""
+    return mwv_datagram(angle=direction, speed=speed)
 
 
 def feed(monitor, seconds, speed, direction=90.0, start=0.0, rate=1.0):
@@ -32,42 +34,83 @@ def feed(monitor, seconds, speed, direction=90.0, start=0.0, rate=1.0):
 
 
 class TestParsing:
-    def test_reads_the_configured_fields(self):
-        assert W.parse_sentence(sentence(123.4, 5.6), 2, 4, 100.0) == (123.4, 5.6)
+    """Against the real datagram shape, captured at Greenhill."""
 
-    def test_ignores_an_nmea_checksum(self):
-        assert W.parse_sentence('$WIMWV,x,90,R,3.0,M,A*4F', 2, 4, 100.0)[1] == 3.0
+    def test_reads_a_real_datagram(self):
+        angle, speed, reference = W.parse_sentence(
+            'UdPbC\x00\\s:D383P1,s:WI4383*23\\$IIMWV,273,R,007.51,M,A*15', 100.0)
+        assert angle == 273.0
+        assert speed == pytest.approx(7.51)
+        assert reference == 'R'
 
-    def test_field_positions_are_configurable(self):
-        # The anemometer's format is unconfirmed. If the recorder shows the
-        # values live elsewhere, that must be a config change, not a release.
-        assert W.parse_sentence('$X,45.0,7.5', 1, 2, 100.0) == (45.0, 7.5)
+    def test_is_not_fooled_by_the_wrapper(self):
+        # The legacy display splits the whole datagram on commas and reads
+        # fields 2 and 4. That lands on the right values only because the TAG
+        # block contributes exactly one comma; any change to the header shifts
+        # both, silently, and the result still looks like a number.
+        plain = W.parse_sentence(mwv_datagram(angle=273, speed=7.51,
+                                              wrapper=False), 100.0)
+        wrapped = W.parse_sentence(mwv_datagram(angle=273, speed=7.51), 100.0)
+        assert plain == wrapped
 
-    @pytest.mark.parametrize('text', [
-        '$WIMWV,x,notanumber,R,3.0,M',
-        '$WIMWV,x,90,R,notanumber,M',
-        'too,short',
-        '',
+    def test_the_identification_sentence_is_not_a_wind_reading(self):
+        # $WIVER arrives every few minutes. Read by field index it yields
+        # angle 1 and speed 'WI'; the legacy parser is saved only by float()
+        # raising into a bare except.
+        with pytest.raises(W.NoWindSentence):
+            W.parse_sentence(ver_datagram(), 100.0)
+
+    def test_a_datagram_with_no_sentence_is_not_an_error(self):
+        # Distinct from a broken sentence: this is normal traffic.
+        with pytest.raises(W.NoWindSentence):
+            W.parse_sentence('nothing of interest here', 100.0)
+
+    @pytest.mark.parametrize('units,value,expected_ms', [
+        ('M', 7.51, 7.51),          # metres per second
+        ('N', 10.0, 5.14444),       # knots
+        ('K', 36.0, 10.0),          # kilometres per hour
+        ('S', 10.0, 4.4704),        # miles per hour
     ])
-    def test_rejects_unusable_sentences(self, text):
-        with pytest.raises(W.WindParseError):
-            W.parse_sentence(text, 2, 4, 100.0)
+    def test_speed_is_converted_from_the_units_on_the_wire(self, units, value,
+                                                           expected_ms):
+        # The sentence carries its units, so they are read rather than assumed.
+        # If the instrument is ever reconfigured to knots, 7.51 knots does not
+        # silently become 7.51 m/s.
+        _, speed, _ = W.parse_sentence(
+            mwv_datagram(speed=value, units=units), 100.0)
+        assert speed == pytest.approx(expected_ms, rel=1e-4)
 
-    @pytest.mark.parametrize('direction', [-1, 400])
-    def test_rejects_impossible_directions(self, direction):
+    def test_rejects_unknown_units(self):
+        with pytest.raises(W.WindParseError, match='units'):
+            W.parse_sentence(mwv_datagram(units='Z'), 100.0)
+
+    def test_rejects_a_void_reading(self):
+        # 'V' is the instrument telling us its own reading is no good.
+        with pytest.raises(W.WindParseError, match='not valid'):
+            W.parse_sentence(mwv_datagram(status='V'), 100.0)
+
+    def test_rejects_a_bad_checksum(self):
+        with pytest.raises(W.WindParseError, match='checksum'):
+            W.parse_sentence(mwv_datagram(corrupt_checksum=True), 100.0)
+
+    def test_accepts_any_talker(self):
+        # II at Greenhill, but WI and others are legitimate.
+        assert W.parse_sentence(mwv_datagram(talker='WI'), 100.0)[1] > 0
+
+    @pytest.mark.parametrize('angle', [-1, 400])
+    def test_rejects_impossible_angles(self, angle):
         with pytest.raises(W.WindParseError, match='0-360'):
-            W.parse_sentence(sentence(direction, 3.0), 2, 4, 100.0)
-
-    def test_rejects_a_negative_speed(self):
-        with pytest.raises(W.WindParseError, match='negative'):
-            W.parse_sentence(sentence(90, -1.0), 2, 4, 100.0)
+            W.parse_sentence(mwv_datagram(angle=angle), 100.0)
 
     def test_rejects_an_implausible_speed(self):
-        # 360 km/h is a misparsed field, not weather. It matters because such a
-        # reading would trip the gust threshold and close the dome on nothing
-        # more than a change in the sentence format.
+        # 360 km/h is a misparse, not weather. It matters because it would trip
+        # the gust threshold and close the dome on a formatting change.
         with pytest.raises(W.WindParseError, match='plausible'):
-            W.parse_sentence(sentence(90, 150.0), 2, 4, 100.0)
+            W.parse_sentence(mwv_datagram(speed=150.0), 100.0)
+
+    def test_a_non_numeric_speed_is_a_parse_error(self):
+        with pytest.raises(W.WindParseError, match='speed'):
+            W.parse_sentence('$IIMWV,273,R,abc,M,A', 100.0, verify_checksum=False)
 
 
 class TestCircularMean:
@@ -198,14 +241,104 @@ class TestVerdict:
         assert monitor.verdict(now)[0] == W.CALM
         assert monitor.verdict(now + 20.0)[0] == W.UNKNOWN
 
-    def test_garbage_does_not_count_as_liveness(self):
-        # A sender emitting nonsense is a dead source. If rejected sentences
-        # refreshed the staleness clock, a stuck instrument would look healthy
-        # forever.
+    def test_a_corrupt_instrument_does_not_count_as_liveness(self):
+        # A sender emitting broken wind sentences is a dead source. If
+        # rejections refreshed the staleness clock, a stuck instrument would
+        # look healthy forever.
         monitor = W.WindMonitor(self.config())
         now = feed(monitor, 30, speed=2.0)
         for _ in range(30):
             now += 1.0
-            monitor.update(now, 'garbage,,,')
+            monitor.update(now, mwv_datagram(corrupt_checksum=True))
         assert monitor.rejected_count == 30
         assert monitor.verdict(now)[0] == W.UNKNOWN
+
+    def test_non_wind_traffic_does_not_count_as_liveness_either(self):
+        # $WIVER proves the instrument is powered, but says nothing about the
+        # wind. A stream of nothing but identification sentences must still age
+        # into UNKNOWN.
+        monitor = W.WindMonitor(self.config())
+        now = feed(monitor, 30, speed=2.0)
+        for _ in range(30):
+            now += 1.0
+            monitor.update(now, ver_datagram())
+        assert monitor.ignored_count == 30
+        assert monitor.rejected_count == 0      # not a fault, just not wind
+        assert monitor.verdict(now)[0] == W.UNKNOWN
+
+
+class TestNorthOffset:
+    """The offset rotates the instrument's zero mark to true north, so it
+    belongs only to a bearing reported as RELATIVE."""
+
+    def test_applied_to_a_relative_bearing(self):
+        config = WeatherConfig(wind_north_offset_deg=30.0,
+                               wind_direction_min_speed_ms=1.0)
+        monitor = W.WindMonitor(config)
+        now = 0.0
+        for _ in range(20):
+            monitor.update(now, mwv_datagram(angle=100.0, speed=5.0,
+                                             reference='R'))
+            now += 1.0
+        assert monitor.direction_deg(now) == pytest.approx(130.0, abs=0.1)
+
+    def test_not_applied_to_a_true_bearing(self):
+        # If the OMC-140 is ever configured to emit T, adding the offset would
+        # introduce exactly the error it exists to remove.
+        config = WeatherConfig(wind_north_offset_deg=30.0,
+                               wind_direction_min_speed_ms=1.0)
+        monitor = W.WindMonitor(config)
+        now = 0.0
+        for _ in range(20):
+            monitor.update(now, mwv_datagram(angle=100.0, speed=5.0,
+                                             reference='T'))
+            now += 1.0
+        assert monitor.direction_deg(now) == pytest.approx(100.0, abs=0.1)
+
+
+class TestAgainstTheRealCapture:
+    """Fifteen minutes of real Greenhill traffic, replayed.
+
+    The parser this replaced would have rejected every one of these datagrams:
+    it split on '*' first, which cuts at the TAG block's own checksum and
+    leaves two fields. Wind would have been permanently UNKNOWN, and the site
+    permanently unsafe.
+    """
+
+    def capture(self):
+        import json
+        import os
+        path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'greenhill-capture.jsonl')
+        if not os.path.exists(path):
+            pytest.skip('capture file not present')
+        with open(path, encoding='utf-8') as handle:
+            for line in handle:
+                record = json.loads(line)
+                if record.get('stream') == 'wind' and 'text' in record:
+                    yield record
+
+    def test_every_wind_datagram_is_understood(self):
+        accepted = ignored = rejected = 0
+        for record in self.capture():
+            try:
+                W.parse_sentence(record['text'], 100.0)
+                accepted += 1
+            except W.NoWindSentence:
+                ignored += 1
+            except W.WindParseError:
+                rejected += 1
+        assert rejected == 0
+        assert ignored == 1                 # one $WIVER identification
+        assert accepted > 800
+
+    def test_the_readings_are_plausible_weather(self):
+        speeds = []
+        for record in self.capture():
+            try:
+                speeds.append(W.parse_sentence(record['text'], 100.0)[1])
+            except (W.NoWindSentence, W.WindParseError):
+                pass
+        # It was a windy quarter of an hour: about 6.4 m/s mean, gusting to 12.6.
+        assert 1.0 < min(speeds) < 5.0
+        assert 8.0 < max(speeds) < 20.0

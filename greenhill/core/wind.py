@@ -1,30 +1,47 @@
 # -*- coding: utf-8 -*-
-"""Wind from the anemometer's own multicast stream.
+r"""Wind from the anemometer's own multicast stream.
 
-The instrument multicasts a comma-separated ASCII sentence to the LAN; nothing
-in this project produces it, and `wind_sensor.py` in the WindSensor repo was
-only ever a display client for it.
+The instrument multicasts to the LAN; nothing in this project produces that
+traffic, and `wind_sensor.py` in the WindSensor repo was only ever a display
+client for it.
 
-TWO THINGS HERE ARE PROVISIONAL AND BOTH ARE IN CONFIG.
+WHAT IS ACTUALLY ON THE WIRE, from a 15 minute capture at Greenhill:
 
-The sentence format is undocumented. The legacy display reads direction from
-field 2 and speed from field 4, by fixed index, behind a bare `except:` that
-silently yields no reading -- so if those positions were ever wrong, nothing
-would have said so. `tools/record_streams.py` prints a real sentence field by
-field to settle it. The positions are configuration, so correcting them is a
-config edit rather than a release.
+    UdPbC\x00\s:D383P1,s:WI4383*23\$IIMWV,273,R,007.51,M,A*15
+    |_______________________________||_________________________|
+     proprietary UDP wrapper and an   the NMEA 0183 sentence
+     NMEA 0183 v4 TAG block
 
-The legacy display also adds 30 degrees to the raw direction, with no note
-saying why; presumably a mounting correction. It is carried forward so
-behaviour does not change silently, but WindDirection should not be trusted
-until someone has checked it against a known reference.
+The instrument is an Observator OMC-140 -- it says so itself in a `$WIVER`
+sentence it emits every few minutes among the wind ones. The wind sentence is
+MWV (Wind Speed and Angle):
 
-Speed is metres per second -- confirmed with the observatory -- and stays that
-way everywhere. ASCOM and Arcsecond both want m/s, and a km/h value anywhere in
-this code would eventually become a threshold wrong by a factor of 3.6.
+    $IIMWV,<angle>,<reference>,<speed>,<units>,<status>*<checksum>
+
+so the reading carries its own units and its own validity flag, and neither has
+to be assumed.
+
+THIS IS PARSED AS NMEA, NOT BY FIELD INDEX. The legacy display splits the whole
+datagram on commas and reads fields 2 and 4, which happens to land on angle and
+speed -- but only because the TAG block contributes exactly one comma. Any
+change to that header silently shifts both fields, and the reading would still
+look like a number. It also means the `$WIVER` sentence is read as wind: angle
+1, speed "WI", saved only by the float() raising into a bare except.
+
+Speed is converted from whatever `units` says, rather than assumed to be m/s.
+Everything downstream is m/s, because ASCOM and Arcsecond both require it and a
+km/h value anywhere would become a threshold wrong by a factor of 3.6.
+
+The `reference` field is why the north offset exists: the OMC-140 is reporting
+`R`, an angle relative to its own zero mark, so the offset rotates it to true
+north. The offset is applied ONLY to relative readings -- if the instrument is
+ever configured to emit `T`, adding it would introduce the very error it exists
+to remove.
 """
 
+
 import math
+import re
 from typing import List, Optional, Tuple
 
 UNKNOWN = 'unknown'
@@ -33,58 +50,103 @@ WINDY = 'windy'
 
 
 class WindParseError(ValueError):
-    """A sentence that is not a usable wind reading."""
+    """A wind sentence that is present but not usable."""
 
 
-def parse_sentence(text, direction_field, speed_field, max_plausible_ms):
-    # type: (str, int, int, float) -> Tuple[float, float]
-    """One sentence -> (raw direction degrees, speed m/s).
+class NoWindSentence(ValueError):
+    """This datagram carries no wind reading at all.
 
-    Strict: anything questionable raises. The legacy parser returned "no
-    reading" for every failure, which is indistinguishable from a calm night
-    and left the display frozen on its last good values indefinitely.
+    Not an error. The instrument also emits `$WIVER` identification sentences,
+    and a datagram that is simply not about wind must not be counted against
+    the stream's health -- while equally not being allowed to pass for a
+    reading.
+    """
+
+
+# One MWV sentence anywhere inside the datagram, past whatever wrapper and TAG
+# block precede it.
+MWV = re.compile(
+    r'\$(?P<talker>[A-Z]{2})MWV,'
+    r'(?P<angle>[^,]*),(?P<reference>[^,]*),'
+    r'(?P<speed>[^,]*),(?P<units>[^,]*),(?P<status>[^,*]*)'
+    r'(?:\*(?P<checksum>[0-9A-Fa-f]{2}))?')
+
+# NMEA speed units -> metres per second.
+UNIT_TO_MS = {
+    'M': 1.0,               # metres per second
+    'N': 0.514444,          # knots
+    'K': 1.0 / 3.6,         # kilometres per hour
+    'S': 0.44704,           # miles per hour
+}
+
+REFERENCE_RELATIVE = 'R'
+REFERENCE_TRUE = 'T'
+STATUS_VALID = 'A'
+
+
+def nmea_checksum(sentence_body):
+    # type: (str) -> int
+    """XOR of every character between the '$' and the '*'."""
+    value = 0
+    for char in sentence_body:
+        value ^= ord(char)
+    return value
+
+
+def parse_sentence(text, max_plausible_ms, verify_checksum=True):
+    # type: (str, float, bool) -> Tuple[float, float, str]
+    """One datagram -> (angle degrees, speed m/s, reference).
+
+    Raises NoWindSentence when the datagram is not about wind, and
+    WindParseError when it is but cannot be trusted. The distinction matters:
+    the first is normal traffic, the second is a sick instrument.
     """
     if not isinstance(text, str):
-        raise WindParseError('sentence is not text')
+        raise NoWindSentence('datagram is not text')
 
-    # NMEA-style sentences end with a "*hh" checksum. Nothing here validates it
-    # -- the format is not confirmed to be NMEA -- but it must not be parsed as
-    # part of the last field.
-    body = text.strip().split('*')[0]
-    fields = body.split(',')
+    match = MWV.search(text)
+    if match is None:
+        raise NoWindSentence('no MWV sentence in this datagram')
 
-    for index, name in ((direction_field, 'direction'), (speed_field, 'speed')):
-        if index >= len(fields):
-            raise WindParseError(
-                'sentence has {} fields, need index {} for {}'.format(
-                    len(fields), index, name))
+    if verify_checksum and match.group('checksum'):
+        body = match.group(0)
+        body = body[1:body.rindex('*')]         # between '$' and '*'
+        if nmea_checksum(body) != int(match.group('checksum'), 16):
+            raise WindParseError('MWV checksum does not match')
+
+    status = match.group('status').strip()
+    if status and status != STATUS_VALID:
+        # 'V' means the instrument is telling us its own reading is void.
+        raise WindParseError('MWV status is {!r}, not valid'.format(status))
+
+    units = match.group('units').strip().upper()
+    if units not in UNIT_TO_MS:
+        raise WindParseError('unknown speed units {!r}'.format(units))
 
     try:
-        direction = float(fields[direction_field])
+        angle = float(match.group('angle'))
     except ValueError:
         raise WindParseError(
-            'direction field {} is {!r}, not a number'.format(
-                direction_field, fields[direction_field]))
+            'angle {!r} is not a number'.format(match.group('angle')))
     try:
-        speed = float(fields[speed_field])
+        speed = float(match.group('speed')) * UNIT_TO_MS[units]
     except ValueError:
         raise WindParseError(
-            'speed field {} is {!r}, not a number'.format(
-                speed_field, fields[speed_field]))
+            'speed {!r} is not a number'.format(match.group('speed')))
 
-    if not 0.0 <= direction <= 360.0:
-        raise WindParseError('direction {} is outside 0-360'.format(direction))
+    if not 0.0 <= angle <= 360.0:
+        raise WindParseError('angle {} is outside 0-360'.format(angle))
     if speed < 0.0:
         raise WindParseError('speed {} is negative'.format(speed))
     if speed > max_plausible_ms:
-        # A reading this high is a misparsed field, not weather: 100 m/s is
-        # 360 km/h. Rejecting it matters because it would otherwise trip the
-        # gust threshold and close the dome on a formatting change.
+        # A reading this high is a misparse, not weather: 100 m/s is 360 km/h.
+        # It matters because it would trip the gust threshold and close the
+        # dome on nothing worse than a change of sentence format.
         raise WindParseError(
             'speed {} m/s exceeds the plausible maximum {}'.format(
                 speed, max_plausible_ms))
 
-    return direction, speed
+    return angle, speed, match.group('reference').strip().upper()
 
 
 def circular_mean_and_scatter(degrees_list):
@@ -120,32 +182,35 @@ class WindMonitor(object):
 
     def __init__(self, config):
         self._config = config
-        self._samples = []          # type: List[Tuple[float, float, float]]
+        # (arrival, angle, speed m/s, reference)
+        self._samples = []          # type: List[Tuple[float, float, float, str]]
         self._last_update = None    # type: Optional[float]
         self._rejected = 0
         self._accepted = 0
+        self._ignored = 0
 
     # -- ingest ---------------------------------------------------------------
 
     def update(self, now, text):
         # type: (float, str) -> bool
-        """Take one sentence. Returns whether it was usable.
+        """Take one datagram. Returns whether it yielded a wind reading.
 
-        A rejected sentence does NOT refresh the staleness clock. A sender
-        emitting garbage is a dead source, not a live one, and must age out
-        into UNKNOWN exactly as silence does.
+        A datagram that is not a wind sentence at all is ignored quietly. One
+        that IS a wind sentence but is unusable counts as a rejection and does
+        NOT refresh the staleness clock -- an instrument emitting nonsense is a
+        dead source, and must age into UNKNOWN exactly as silence does.
         """
         try:
-            direction, speed = parse_sentence(
-                text,
-                self._config.wind_direction_field,
-                self._config.wind_speed_field,
-                self._config.wind_max_plausible_ms)
+            angle, speed, reference = parse_sentence(
+                text, self._config.wind_max_plausible_ms)
+        except NoWindSentence:
+            self._ignored += 1
+            return False
         except WindParseError:
             self._rejected += 1
             return False
 
-        self._samples.append((now, direction, speed))
+        self._samples.append((now, angle, speed, reference))
         self._last_update = now
         self._accepted += 1
         self._prune(now)
@@ -217,6 +282,13 @@ class WindMonitor(object):
         if not window:
             return 0.0
         mean, _ = circular_mean_and_scatter([s[1] for s in window])
+
+        # The offset rotates the instrument's own zero mark to true north, so
+        # it belongs only to a RELATIVE bearing. The OMC-140 reports R today;
+        # if it is ever configured to emit T, adding the offset would introduce
+        # exactly the error it exists to remove.
+        if all(s[3] == REFERENCE_TRUE for s in window):
+            return mean % 360.0
         return (mean + self._config.wind_north_offset_deg) % 360.0
 
     def direction_scatter_deg(self, now):
@@ -235,7 +307,14 @@ class WindMonitor(object):
 
     @property
     def rejected_count(self):
+        """Wind sentences that were unusable. A sick instrument."""
         return self._rejected
+
+    @property
+    def ignored_count(self):
+        """Datagrams carrying no wind sentence -- the periodic $WIVER
+        identification, mostly. Normal traffic, not a fault."""
+        return self._ignored
 
     @property
     def accepted_count(self):

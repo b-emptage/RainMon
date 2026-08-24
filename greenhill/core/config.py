@@ -29,8 +29,6 @@ class WeatherConfig(object):
                  wind_gust_average_s=3.0,
                  wind_direction_min_speed_ms=1.0,
                  wind_north_offset_deg=30.0,
-                 wind_direction_field=2,
-                 wind_speed_field=4,
                  wind_max_plausible_ms=100.0,
                  wind_min_samples=10,
                  # --- rain ---------------------------------------------------
@@ -75,12 +73,11 @@ class WeatherConfig(object):
         # checked against a known reference before WindDirection is trusted.
         self.wind_north_offset_deg = wind_north_offset_deg
 
-        # PROVISIONAL. The anemometer's sentence format is undocumented; these
-        # are the positions the legacy display reads, and the recorder exists to
-        # confirm them. Configurable rather than hard-coded so correcting them
-        # is a config edit, not a release.
-        self.wind_direction_field = wind_direction_field
-        self.wind_speed_field = wind_speed_field
+        # There used to be configurable field indices here, because nobody had
+        # written down what the anemometer emits. A capture settled it: the
+        # datagram carries an NMEA 0183 MWV sentence, which greenhill/core/wind.py
+        # now parses properly -- units, validity and reference bearing all come
+        # from the packet. Indices are gone; there is nothing left to guess.
         self.wind_max_plausible_ms = wind_max_plausible_ms
 
         # Below this many samples the mean and gust are not meaningful, so wind

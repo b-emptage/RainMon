@@ -94,6 +94,14 @@ configurable if the observatory wants the old behaviour back.
 | sustained — 60 s mean | 5.56 m/s (20 km/h) |
 | gust — strongest 3 s average in the last 2 minutes | 8.33 m/s (30 km/h) |
 
+> **These thresholds have not been validated against the site.** In a 15 minute
+> capture at Greenhill the 60 s mean exceeded the sustained limit in 95% of
+> evaluations and the gust limit in 88% — the site would have been NOGO for the
+> entire window. Either it was genuinely that windy, or the limits are too tight
+> for an exposed ridge. Worth settling before the wind conditions are trusted to
+> close the dome. Everything else about the wind path is verified; only the two
+> numbers are open.
+
 A gust is a short average, not a single sample. An ultrasonic head produces the
 odd spiky reading, and a threshold that fired on one of those would close the
 dome on sensor noise. This also matches the ASCOM definition, so the figure
@@ -190,17 +198,36 @@ Neither mode commands anything. They watch.
 ## Settings
 
 All of it is in `greenhill/core/config.py`, wired to `config.toml` in Phase 3.
-Two values there are **provisional** and both concern the anemometer, whose
-sentence format has never been written down:
+### The anemometer, now that it has been captured
 
-* `wind_direction_field` / `wind_speed_field` — the positions the legacy
-  display reads. Configurable so that correcting them is a config edit rather
-  than a release. `tools/record_streams.py` prints a real sentence field by
-  field to settle it.
-* `wind_north_offset_deg` — the legacy display adds 30°, with no note saying
-  why. Carried forward so behaviour does not change silently, but
-  `WindDirection` should not be trusted until it has been checked against a
-  known reference.
+The instrument is an **Observator OMC-140**. It multicasts a proprietary UDP
+wrapper and an NMEA 0183 v4 TAG block, followed by the sentence:
+
+```
+UdPbC\x00\s:D383P1,s:WI4383*23\$IIMWV,273,R,007.51,M,A*15
+```
+
+`MWV` is Wind Speed and Angle: angle, reference, speed, units, status. **The
+reading carries its own units and its own validity flag**, so neither is
+assumed — a reconfiguration to knots would be converted, not misread, and a
+`V` (void) reading is rejected rather than averaged in.
+
+This is parsed as NMEA, **not by field index**. The legacy display splits the
+whole datagram on commas and reads fields 2 and 4, which lands on the right
+values only because the TAG block contributes exactly one comma. Any change to
+that header shifts both fields silently, and the result still looks like a
+number. It also reads the periodic `$WIVER` identification sentence as wind —
+angle 1, speed `WI` — saved only by `float()` raising into a bare `except`.
+
+**`wind_north_offset_deg` (30°) is still provisional.** Its purpose is now
+clear: the OMC-140 reports `R`, an angle relative to its own zero mark, and the
+offset rotates that to true north. It is applied only to relative readings, so
+a switch to `T` output cannot double-count it. But the value itself has not
+been checked against a known reference, and `WindDirection` should not be
+trusted until it has. Nothing in the safety logic uses direction.
+
+The capture reads a steady westerly around 275–290°, which is at least
+plausible for the latitude.
 
 ## Testing
 

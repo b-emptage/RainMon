@@ -93,3 +93,35 @@ def set_weather_state(device, is_safe=True, reasons=None, rain_rate=0.0,
             detector_states=detectors or {'H127': 'D', 'H50': 'D', 'ACC': 'D'})
     # The simulated feed would overwrite it on its next tick.
     device._stop.set()
+
+
+# The real anemometer datagram, as captured at Greenhill: a proprietary UDP
+# wrapper, an NMEA 0183 v4 TAG block, then the sentence. Tests build the real
+# shape rather than a convenient one, because the shape IS most of what the
+# parser has to cope with.
+WRAPPER = 'UdPbC\x00\\s:D383P1,s:WI4383*23\\'
+
+
+def nmea(body):
+    """'$' + body + checksum, as the instrument sends it."""
+    checksum = 0
+    for char in body:
+        checksum ^= ord(char)
+    return '${}*{:02X}'.format(body, checksum)
+
+
+def mwv_datagram(angle=90.0, speed=2.0, reference='R', units='M', status='A',
+                 talker='II', wrapper=True, corrupt_checksum=False):
+    """One MWV datagram. `speed` is in whatever `units` says, as on the wire."""
+    sentence = nmea('{}MWV,{},{},{:06.2f},{},{}'.format(
+        talker, angle, reference, speed, units, status))
+    if corrupt_checksum:
+        sentence = sentence[:-2] + ('00' if not sentence.endswith('00') else 'FF')
+    return (WRAPPER if wrapper else '') + sentence
+
+
+def ver_datagram():
+    """The identification sentence the OMC-140 emits every few minutes. Carries
+    no wind reading, and must not be mistaken for one."""
+    return ('UdPbC\x00\\s:D383G0,s:WI4383*35\\'
+            '$WIVER,1,1,WI,OBS,,OMC-14000002383,OMC-140,02.40B18,,0*46')

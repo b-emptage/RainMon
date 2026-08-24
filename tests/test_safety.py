@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from greenhill import rain_protocol as proto  # noqa: E402
 from greenhill.core.config import WeatherConfig  # noqa: E402
 from greenhill.core.safety import LatchedCondition, SafetyEvaluator  # noqa: E402
+from conftest import mwv_datagram  # noqa: E402
 
 NAMES = ('H127', 'H50', 'ACC')
 
@@ -49,7 +50,7 @@ class Site:
                     rain_ok))
             if send_wind:
                 self.evaluator.wind.update(
-                    self.now, '$WIMWV,x,90,R,{},M,A'.format(wind_speed))
+                    self.now, mwv_datagram(angle=90.0, speed=wind_speed))
             state = self.evaluator.update(self.now)
             self.now += 1.0
         return state
