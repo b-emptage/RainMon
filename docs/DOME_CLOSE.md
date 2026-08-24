@@ -112,16 +112,27 @@ after the service has been safe once — protection would then rely on Arcsecond
 for the first thirty seconds after a restart. That is a trade, not an
 improvement, and it is the observatory's call.
 
-## The shared `Connected` flag
+## Connection is per client — fixed
 
-Alpaca's `Connected` is one flag on the device, not one per client. The
-observatory now has two clients on the dome: Arcsecond and this service. If
-either sets it false, **the dome de-energises its motors** — possibly mid-close.
+ASCOM has one `Connected` property, and the dome now has two clients:
+Arcsecond, and this service. Sharing a single flag meant either one setting it
+false would **de-energise the dome's motors under the other** — possibly
+mid-close.
 
-This client never does. But it is worth knowing that Arcsecond could, and that
-the consequence is not merely a dropped connection. ASCOM Platform 7's
-per-client `Connect`/`Disconnect` is the proper fix; the dome implements those
-members, so moving both clients onto them would remove the hazard entirely.
+`Greenhill-DomeShutter` now tracks connection state per ClientID. The board
+opens for the first client and is released only when the last one lets go, so
+Arcsecond disconnecting can no longer interrupt a close in progress. The rule
+that was being protected — a shell must never be left running with nobody
+watching — still holds; it just distinguishes "a client went away" from
+"everyone went away".
+
+This client uses ClientID **1782** and never disconnects, including on
+shutdown. It does not need to: the dome expires clients that have gone silent
+for five minutes, so a crash here releases the board on its own.
+
+Verified against the running dome server: both clients connect, Arcsecond
+disconnects, and this service can still read `ShutterStatus` and command
+`CloseShutter`.
 
 ## Testing
 
