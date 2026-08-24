@@ -6,6 +6,62 @@ Alpaca devices, both close routes, the display — is a view onto this.
 Runs on the Windows 11 box, alongside arcsecond-local and the equipment Alpaca
 server. It reads two multicast streams and produces one boolean.
 
+---
+
+## Fail closed — read this first
+
+**The system reports UNSAFE unless it can positively see that conditions are
+good.** Not "safe unless it detects a problem". The difference is the whole
+point of the rewrite, and it changes what several ordinary events do.
+
+Every one of these reports **unsafe**:
+
+| | |
+|---|---|
+| The service has just started | It has not looked at the sky yet. |
+| Either sensor stream is silent for 15 s | The Windows 7 bridge or the anemometer has stopped. |
+| The rain bridge reports its serial port down | It is alive; its sensors are not. |
+| Fewer than 2 rain detectors report a usable state | `P`, `M`, `I`, `E` and `e` say nothing about the sky. |
+| Too few wind samples to average | Not enough to mean anything. |
+| Anything unexpected | The verdict starts false and is only ever cleared by evidence. |
+
+In the software this replaces, **every one of those cases produced a wet count
+of zero**, which was indistinguishable from a clear night. A dead serial link,
+a disconnected sensor and an errored detector all read as "no rain", and
+nothing closed the dome.
+
+### What this means in practice
+
+**Restarting the weather service will close the dome.** It comes up unsafe,
+because it has not yet seen anything, and route 1 acts on that. The dome stays
+shut until conditions have been good for the settle period and Arcsecond's
+recovery procedure reopens it. This is the design working, not a fault — but
+it is disruptive if you do not expect it, so **do not restart this service
+mid-observation without expecting the roof to close.**
+
+**A latch is never released by the absence of evidence.** If it rains and then
+the rain bridge dies, the ten-minute countdown does not run through the
+blackout — it freezes, and restarts only when the sensors can be seen again.
+The clear period is ten minutes of *observed* dryness, never ten minutes of not
+looking.
+
+**A blind rain sensor publishes rain.** When the detectors cannot be read,
+`RainRate` is raised rather than dropped, so a device that Arcsecond can reach
+but that cannot see still produces a NOGO. See *What gets published* below.
+
+**Both close routes fire.** Closing a closed dome is a no-op, so nothing is
+lost, and neither route is a single point of failure.
+
+### What fail-closed does NOT cover
+
+If the **Windows 11 box itself** dies, this service is not running and neither
+is arcsecond-local. Nothing tells the dome to close. The only protection that
+survives that is a dome-side deadman — the dome closing itself if it has not
+heard from the weather service in N minutes. That is recommended and not yet
+built; see [DECISIONS.md](DECISIONS.md).
+
+---
+
 ## The rules
 
 ### Rain
@@ -49,17 +105,9 @@ factor of 3.6.
 
 ### Not being able to tell
 
-All of the following are **unsafe**, not "no rain":
-
-* no data yet, or either stream silent for 15 s
-* the bridge reporting its serial port down
-* fewer than 2 detectors reporting a usable state — `P`, `M`, `I`, `E` and `e`
-  say nothing about the sky and are never counted as dry
-* too few wind samples to average
-
-This is the single biggest behavioural change from the software it replaces,
-where a dead serial link, a disconnected sensor and an errored detector all
-produced a wet count of zero — indistinguishable from a clear night.
+Every way of not knowing reports **unsafe**, never "no rain" — see
+*Fail closed* above, which is the single biggest behavioural change from the
+software this replaces.
 
 ## Latching
 

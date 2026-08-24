@@ -239,10 +239,10 @@ morning. Changing this would mean relying on Arcsecond alone for the first
 thirty seconds after a restart — a trade, not an improvement, and the
 observatory's call.
 
-*The dome now has two Alpaca clients sharing one `Connected` flag.* If either
-sets it false the dome de-energises its motors, possibly mid-close. This service
-never does, but Arcsecond could. ASCOM Platform 7's per-client Connect and
-Disconnect is the proper fix, and the dome already implements them.
+*The dome now has two Alpaca clients.* Originally they shared one `Connected`
+flag, so either could de-energise the dome's motors under the other, possibly
+mid-close. **Fixed:** the dome tracks connection state per client and releases
+the hardware only when the last one disconnects.
 
 **Delivered:** the Alpaca dome client and the close state machine, wired into
 the weather service and reportable from the ASCOM surface, with 249 tests.
@@ -255,3 +255,35 @@ would have reported success on a faulted dome and stopped watching.
 
 **Still to do before arming:** a dry-run close on the actual dome, and a check
 of its real travel time against the 45 s re-issue window.
+
+
+## Follow-ups on the dome server
+
+Two changes were made to `Greenhill-DomeShutter` while building the weather
+service, both prompted by it being the dome's second Alpaca client.
+
+**Connection is now per client.** ASCOM has one `Connected` property and the
+dome now has two clients — Arcsecond, and the weather service that closes it.
+Sharing one flag meant either could de-energise the motors under the other,
+possibly mid-close. The board now opens for the first client and is released
+only when the last lets go, which preserves the rule that mattered (a shell
+must never be left running with nobody watching) while distinguishing "a client
+went away" from "everyone went away". Clients that go silent for five minutes
+are expired, because Alpaca is stateless HTTP and a crashed client never says
+goodbye — and because Arcsecond's client library picks a random identity at
+startup, so it presents a new one after every restart.
+
+**The error handler no longer loses the error.** It used a calling convention
+Falcon dropped three major versions ago, so the handler whose job was reporting
+a fault crashed instead — discarding the real exception. Found by building a
+second server on the same code and watching a responder fail; conformance
+testing could not have found it, because Conform never provokes a driver fault.
+
+## On fail-closed
+
+Confirmed and kept as it stands. The system reports unsafe unless it can
+positively see that conditions are good, and this is now the first thing both
+the README and the safety document say. The consequence the observatory should
+expect: **restarting the weather service closes the dome**, because it comes up
+having not yet seen the sky. That is the design working, not a fault, but it is
+disruptive if unexpected.
