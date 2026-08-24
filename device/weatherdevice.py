@@ -32,6 +32,7 @@ from logging import Logger
 from typing import Dict, List, Optional
 
 from greenhill import rain_protocol
+from greenhill.core.dome_client import AlpacaDomeClient, DomeCloser
 from greenhill.core.receiver import MulticastReader
 from greenhill.core.safety import SafetyEvaluator
 
@@ -115,6 +116,7 @@ class GreenhillWeather(object):
         self._lock = threading.Lock()
         self._state = None
         self._started_monotonic = None  # type: Optional[float]
+        self._closer = None             # type: Optional[DomeCloser]
 
         # See the module docstring: true from the start, and never a gate on
         # the monitoring itself.
@@ -149,6 +151,14 @@ class GreenhillWeather(object):
             self._logger.warning(
                 '==SIMULATED== feeding synthetic dry, calm weather. This '
                 'server is NOT watching the sky.')
+            # Route 1 is deliberately NOT armed here, whatever the config says.
+            # A server running on invented weather must never be in a position
+            # to command a real roof -- and simulate.py is what Conform and
+            # bench work run against, on machines that may well be able to
+            # reach the dome.
+            self._logger.warning(
+                '==DOME CLOSE NOT ARMED== simulated mode never commands the '
+                'dome, regardless of dome_close_enabled.')
             return
 
         self._reader = MulticastReader()
@@ -168,9 +178,60 @@ class GreenhillWeather(object):
         self._thread.start()
         self._logger.info('==WEATHER== monitoring started. %s',
                           self._config.describe_wind_thresholds())
+        self._start_dome_closer()
+
+    def _start_dome_closer(self):
+        # type: () -> None
+        """Arm route 1, if it has been turned on.
+
+        Off unless the configuration says otherwise, and the state is logged
+        either way at a level nobody can miss. This is the only thing in the
+        package that commands a roof; a service that started driving one the
+        moment it was installed -- before anyone had checked the address or
+        watched a dry run -- would be the wrong kind of helpful. But a
+        forgotten `false` would leave the observatory a route short without
+        anything saying so, which is why the disarmed case shouts too.
+        """
+        if not self._config.dome_close_enabled:
+            self._logger.warning(
+                '==DOME CLOSE NOT ARMED== dome_close_enabled is false, so this '
+                'service will NOT close the dome itself. Arcsecond is the only '
+                'route, and it runs about 90 seconds behind.')
+            return
+        if not self._config.dome_address:
+            self._logger.error(
+                '==DOME CLOSE MISCONFIGURED== dome_close_enabled is true but '
+                'dome_address is empty. Route 1 is NOT armed.')
+            return
+
+        client = AlpacaDomeClient(self._config.dome_address,
+                                  self._config.dome_device_number,
+                                  self._config.dome_http_timeout_s)
+        # Passes a callable rather than a value: the closer runs on its own
+        # thread and must read the verdict as it stands each time it looks, not
+        # as it stood when it started.
+        self._closer = DomeCloser(client, self._safety_verdict, self._logger,
+                                  self._config, reasons=lambda: self.unsafe_reasons)
+        self._closer.start()
+
+    def _safety_verdict(self):
+        # type: () -> Optional[bool]
+        """True, False, or None when nothing has been evaluated yet.
+
+        None matters: it is not the same as unsafe. The weather service already
+        answers False the moment it has looked at anything at all, so None can
+        only mean the closer is running ahead of the first evaluation -- and
+        commanding a roof on no information is not a safe default, it is an
+        arbitrary one.
+        """
+        state = self._snapshot()
+        return None if state is None else bool(state.is_safe)
 
     def stop(self):
         # type: () -> None
+        if self._closer is not None:
+            self._closer.stop()
+            self._closer = None
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
@@ -407,4 +468,8 @@ class GreenhillWeather(object):
             'rainBridgeRestarts': self._evaluator.rain.restart_count,
             'wetSections': self._evaluator.rain.wet_sections,
             'observingDetectors': self._evaluator.rain.observing_count,
+            # Route 1's own state, so an operator can see from the ASCOM
+            # surface whether the direct close is armed and what it last did.
+            'domeClose': (self._closer.status() if self._closer is not None
+                          else {'state': 'not armed'}),
         }

@@ -90,6 +90,47 @@ rain_clear_s = 600.0
 # Wind needs far less -- nothing has to dry, it only has to stop gusting.
 wind_clear_s = 120.0
 
+# ---------------------------------------------------------------------------
+# ROUTE 1 -- the direct dome close.
+#
+# When the safety verdict goes false, this service can command the dome server
+# on the other machine to close, and then watch until the dome confirms it is
+# shut. That takes a second or two. Arcsecond reaches the same conclusion and
+# runs its own close procedure, but on a 60 s weather poll plus a 30 s safety
+# heartbeat -- up to about ninety seconds behind.
+#
+# Both routes are meant to fire. Closing a closed dome is a no-op, so the
+# overlap costs nothing and neither route is a single point of failure.
+#
+# OFF BY DEFAULT. Turn it on deliberately, once the address is confirmed and a
+# dry-run close has been watched on the real dome. The server logs loudly at
+# startup whichever state this is in, so a forgotten `false` cannot pass
+# unnoticed.
+#
+# This service NEVER reopens the dome -- that is Arcsecond's recovery
+# procedure -- and it never disconnects from it, because the dome de-energises
+# its motors on Disconnect and doing that mid-close would stop the close.
+# ---------------------------------------------------------------------------
+# These sit in the [weather] table above -- flat keys, not a sub-table, because
+# a nested table would arrive as a dict that the settings loader ignores.
+dome_close_enabled = false
+dome_address = ''               # 'host:11111' of the dome Alpaca server
+dome_device_number = 0
+
+# How often to look at the dome while a close is running.
+dome_poll_interval_s = 2.0
+
+# How long to let a close run before commanding another. MUST comfortably
+# exceed the dome's full travel time, or a slow close collects a second command
+# halfway through. Measure the real travel before trusting this number.
+dome_verify_timeout_s = 45.0
+
+# Fast attempts before escalating. After this it keeps trying, but slowly and
+# with one loud message rather than a log filling at 1 Hz. It never gives up:
+# the roof still has to shut.
+dome_retry_limit = 3
+dome_escalated_retry_s = 60.0
+
 [logging]
 log_level = 'INFO'
 log_to_stdout = true

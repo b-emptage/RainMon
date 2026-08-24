@@ -196,3 +196,62 @@ latch to HTTP.
 
 **Not yet verified:** Conform has only been run against the simulator. It should
 be run against the real installation before the observatory relies on it.
+
+## Phase 4 — the direct dome close (done)
+
+**Both routes fire, and that is the point.** This service closes the dome
+directly in a second or two; Arcsecond reaches the same conclusion about ninety
+seconds later and closes it again. Closing a closed dome is a no-op, so the
+overlap costs nothing and neither route is a single point of failure.
+
+**It only ever closes.** Reopening stays with Arcsecond's recovery procedure, so
+the two routes can never argue about whether the dome should be open.
+
+**It never disconnects from the dome.** Disconnecting de-energises the dome's
+motors — by design, so a client dropping out cannot leave a shell running
+unwatched — which means disconnecting mid-close would stop the close.
+
+**It waits for the dome to confirm it is shut**, rather than assuming the
+command worked. The dome reports a half-open shell as "open", deliberately, so
+that is what "not yet closed" looks like and the closer keeps waiting.
+
+**A latched fault does not stop it trying.** The dome guarantees that closing is
+never blocked by a fault, because it must not be possible to lock the roof open.
+The close is issued anyway and logged as needing an engineer.
+
+**An unreachable dome escalates once and then keeps trying quietly.** It never
+gives up — the roof still has to shut — but a critical message repeated every
+second buries itself.
+
+**Off by default.** This is the only thing in the package that commands a roof.
+It must be turned on deliberately, after a dry-run close on the real dome. The
+startup log shouts whichever state it is in, so a forgotten setting cannot pass
+unnoticed, and simulated mode refuses to arm it at all — bench and conformance
+runs must never be able to drive a real dome on invented weather.
+
+**Two things to be aware of operationally:**
+
+*Restarting the weather service will close the dome.* It starts unsafe because
+it has not yet seen the sky. That is the fail-closed design working, but it
+means a restart mid-night shuts the roof until conditions have been good for the
+settle period. The close log now says why, so it is self-explanatory in the
+morning. Changing this would mean relying on Arcsecond alone for the first
+thirty seconds after a restart — a trade, not an improvement, and the
+observatory's call.
+
+*The dome now has two Alpaca clients sharing one `Connected` flag.* If either
+sets it false the dome de-energises its motors, possibly mid-close. This service
+never does, but Arcsecond could. ASCOM Platform 7's per-client Connect and
+Disconnect is the proper fix, and the dome already implements them.
+
+**Delivered:** the Alpaca dome client and the close state machine, wired into
+the weather service and reportable from the ASCOM surface, with 249 tests.
+Verified end to end against the real dome server on its simulated board — rain
+on the wire, through the fused verdict, to a confirmed closed dome.
+
+**Corrected along the way:** the plan for this work said to wait for
+`shutterClosed (4)`. Closed is 1; 4 is the error state. A closer built on that
+would have reported success on a faulted dome and stopped watching.
+
+**Still to do before arming:** a dry-run close on the actual dome, and a check
+of its real travel time against the 45 s re-issue window.

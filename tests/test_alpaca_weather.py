@@ -334,3 +334,82 @@ class TestServerIdentity:
         value = client.simulate_get('/management/v1/description').json['Value']
         assert 'dome' not in value['ServerName'].lower()
         assert 'weather' in value['ServerName'].lower()
+
+
+
+class TestRouteOneArming:
+    """Whether the direct dome close is armed, and how loudly it says so.
+
+    This is the only thing in the package that commands a roof, so both states
+    are logged at a level nobody can miss: armed, because that is worth
+    knowing; and NOT armed, because a forgotten `false` would leave the
+    observatory a route short with nothing saying so.
+    """
+
+    def _service(self, **weather):
+        import logging
+
+        from greenhill.core.config import WeatherConfig
+        from weatherdevice import GreenhillWeather
+
+        logger = logging.getLogger('greenhill-arming-test')
+        multicast = {'wind_group': '239.192.0.4', 'wind_port': 60004,
+                     'rain_group': '239.192.0.5', 'rain_port': 60005,
+                     'interface': '0.0.0.0'}
+        return GreenhillWeather(WeatherConfig(**weather), multicast, logger)
+
+    def test_disarmed_by_default_and_says_so(self, caplog):
+        service = self._service()
+        with caplog.at_level('INFO'):
+            service._start_dome_closer()
+        assert service._closer is None
+        assert 'DOME CLOSE NOT ARMED' in caplog.text
+
+    def test_arming_needs_an_address(self, caplog):
+        # Enabled but unconfigured is the dangerous middle: it reads as armed
+        # in the config file and is not.
+        service = self._service(dome_close_enabled=True, dome_address='')
+        with caplog.at_level('INFO'):
+            service._start_dome_closer()
+        assert service._closer is None
+        assert 'DOME CLOSE MISCONFIGURED' in caplog.text
+
+    def test_arms_when_configured(self, caplog):
+        service = self._service(dome_close_enabled=True,
+                                dome_address='127.0.0.1:11111')
+        with caplog.at_level('INFO'):
+            service._start_dome_closer()
+        try:
+            assert service._closer is not None
+            assert 'DOME CLOSE ARMED' in caplog.text
+        finally:
+            service._closer.stop()
+
+    def test_simulated_weather_never_arms_it(self, caplog):
+        # simulate.py is what Conform and bench work run against, on machines
+        # that may well be able to reach the real dome. A server running on
+        # invented weather must not be able to command a roof, whatever the
+        # config says.
+        service = self._service(dome_close_enabled=True,
+                                dome_address='127.0.0.1:11111')
+        with caplog.at_level('INFO'):
+            service.start(simulate=True)
+        try:
+            assert service._closer is None
+            assert 'simulated mode never commands the dome' in caplog.text
+        finally:
+            service.stop()
+
+    def test_the_verdict_passed_to_the_closer_is_none_before_evaluation(self):
+        # None is not "unsafe". Commanding a roof before anything has been
+        # evaluated would be acting on no information at all.
+        service = self._service()
+        assert service._safety_verdict() is None
+
+    def test_the_diagnostics_action_reports_the_armed_state(self, client, device):
+        # Readable from the ASCOM surface, so an operator can check without
+        # logging in to the machine.
+        set_weather_state(device)
+        body = put(client, SM + 'action',
+                   {'Action': 'Greenhill:GetWeatherStatus', 'Parameters': ''}).json
+        assert json.loads(body['Value'])['domeClose']['state'] == 'not armed'

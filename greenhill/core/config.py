@@ -43,7 +43,16 @@ class WeatherConfig(object):
                  wind_max_age_s=15.0,
                  settle_s=30.0,
                  rain_clear_s=600.0,
-                 wind_clear_s=120.0):
+                 wind_clear_s=120.0,
+                 # --- route 1: the direct dome close -------------------------
+                 dome_close_enabled=False,
+                 dome_address='',
+                 dome_device_number=0,
+                 dome_http_timeout_s=10.0,
+                 dome_poll_interval_s=2.0,
+                 dome_verify_timeout_s=45.0,
+                 dome_retry_limit=3,
+                 dome_escalated_retry_s=60.0):
         # Sustained wind is a 60 s mean; a gust is the strongest 3 s average in
         # the last two minutes, which is the ASCOM definition and also the
         # sensible one. An ultrasonic head is fast and noisy, and closing the
@@ -122,6 +131,32 @@ class WeatherConfig(object):
         # Wind needs far less: nothing has to dry out, it only has to stop
         # gusting. Long enough not to flap around the threshold.
         self.wind_clear_s = wind_clear_s
+
+        # OFF BY DEFAULT, and it must be turned on deliberately. This is the
+        # only setting in the system that commands a roof, and a package that
+        # started driving one the moment it was installed -- before anyone had
+        # checked the address, watched a dry-run close, or confirmed the dome
+        # was answering -- would be the wrong kind of helpful. The server logs
+        # loudly at startup whichever state it is in, so a forgotten `false`
+        # cannot pass unnoticed.
+        self.dome_close_enabled = dome_close_enabled
+        self.dome_address = dome_address                # 'host:11111'
+        self.dome_device_number = dome_device_number
+        self.dome_http_timeout_s = dome_http_timeout_s
+
+        # How often to look at the dome while a close is in progress.
+        self.dome_poll_interval_s = dome_poll_interval_s
+
+        # How long to let a close run before issuing another. Must comfortably
+        # exceed the dome's full travel time, or a slow close gets a second
+        # command on top of it.
+        self.dome_verify_timeout_s = dome_verify_timeout_s
+
+        # Fast attempts before escalating. After this it keeps trying, but
+        # slowly: an unreachable dome is not fixed by asking faster, and a log
+        # filling at 1 Hz buries the one line that matters.
+        self.dome_retry_limit = dome_retry_limit
+        self.dome_escalated_retry_s = dome_escalated_retry_s
 
     @classmethod
     def from_mapping(cls, mapping):

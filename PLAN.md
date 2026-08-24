@@ -184,7 +184,8 @@ wet/dry sections. Say so in `SensorDescription("RainRate")`.
 Alpaca client on Win11 against the dome box:
 
 1. `PUT /api/v1/dome/0/closeshutter`
-2. poll `GET .../shutterstatus` until it reads `shutterClosed` (4)
+2. poll `GET .../shutterstatus` until it reads `shutterClosed` (**1** --
+   4 is `shutterError`)
 3. backoff and retry; escalate to log + speaker if it never gets there
 
 Connect once and **stay connected** — the dome's `Disconnect` de-energises the
