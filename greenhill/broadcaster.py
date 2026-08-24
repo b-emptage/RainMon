@@ -43,6 +43,16 @@ LOG_FILENAME = 'rain_broadcaster.log'
 # when we are killed outright, where a stale file would block every later start.
 SINGLE_INSTANCE_PORT = 50816
 
+# How long a start will wait for the mutex before giving up. A restart typed
+# the moment the old bridge was interrupted lands while that bridge is still
+# finishing its cycle -- the poll can wait out dead detectors for seconds --
+# and closing the serial port. Refusing instantly turns that race into a
+# startup failure; waiting a bounded moment turns it into a clean start. A
+# bridge that is genuinely running keeps the port for its whole life, so after
+# the grace the refusal is real. Same numbers as the two Alpaca servers.
+GUARD_GRACE_SECONDS = 10.0
+GUARD_POLL_SECONDS = 0.25
+
 # How long to wait between attempts to reopen a serial port that has failed.
 # Backs off so a genuinely absent port does not fill the log at 1 Hz, but stays
 # short enough that a cable pushed back in is picked up while the engineer is
@@ -193,28 +203,56 @@ def init_logging(settings):
               file=sys.stderr)
 
 
-def acquire_single_instance_lock():
-    # type: () -> bool
+def acquire_single_instance_lock(grace_seconds=0.0):
+    # type: (float) -> bool
+    """Bind the loopback mutex, retrying a held port for `grace_seconds`.
+
+    The wait is announced on stderr once; 0 means a single attempt.
+    """
     global _instance_guard
-    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        guard.bind(('127.0.0.1', SINGLE_INSTANCE_PORT))
-        guard.listen(1)
-    except OSError:
-        guard.close()
-        return False
-    _instance_guard = guard
-    return True
+    deadline = time.monotonic() + grace_seconds
+    announced = False
+    while True:
+        guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            guard.bind(('127.0.0.1', SINGLE_INSTANCE_PORT))
+            guard.listen(1)
+        except OSError:
+            guard.close()
+            if time.monotonic() >= deadline:
+                return False
+            if not announced:
+                announced = True
+                print('==STARTUP== the rain-bridge mutex port is still held '
+                      '-- a previous bridge may still be shutting down. '
+                      'Waiting up to {:.0f} s for it to let go.'.format(
+                          grace_seconds), file=sys.stderr)
+            time.sleep(GUARD_POLL_SECONDS)
+            continue
+        _instance_guard = guard
+        return True
 
 
 def install_signal_handlers():
     # type: () -> None
-    """Ask the loop to stop. Nothing here latches in hardware -- unlike the
-    dome, there are no relays to de-energise -- so a clean exit only has to
-    close the serial port."""
+    """Ask the loop to stop; a SECOND signal kills the process outright.
+
+    Nothing here latches in hardware -- unlike the dome, there are no relays to
+    de-energise -- so a clean exit only has to close the serial port. But the
+    poll and that close both run through the serial driver, and this handler is
+    Python-level: it cannot run at all while the process is wedged inside a
+    driver call, so pressing Ctrl-C again used to do NOTHING while the wedged
+    process sat on the mutex port refusing every restart. The first request now
+    restores SIG_DFL, which acts below the interpreter: the operator's second
+    Ctrl-C kills even a wedged process, and the kill releases the port.
+    """
     def _request_shutdown(signum, frame):
         global _shutdown_requested
         _shutdown_requested = True
+        try:
+            signal.signal(signum, signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
 
     for name in ('SIGINT', 'SIGTERM', 'SIGBREAK'):
         sig = getattr(signal, name, None)
@@ -370,10 +408,13 @@ def main(argv=None):
     parser.add_argument('--verbose', action='store_true', help='debug logging')
     args = parser.parse_args(argv)
 
-    if not acquire_single_instance_lock():
+    if not acquire_single_instance_lock(grace_seconds=GUARD_GRACE_SECONDS):
         print('==STARTUP FAILED== another rain bridge is already running. Two '
-              'processes cannot share the serial port; refusing to start.',
-              file=sys.stderr)
+              'processes cannot share the serial port; refusing to start. If '
+              'no other bridge is running, the previous one is still alive '
+              'but stuck shutting down: find the python process holding TCP '
+              'port {} and kill it, then start again.'.format(
+                  SINGLE_INSTANCE_PORT), file=sys.stderr)
         return 1
 
     settings = load_config(args.config)

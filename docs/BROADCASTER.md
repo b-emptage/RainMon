@@ -116,7 +116,8 @@ indistinguishable from a clear night.
 | The port cannot be opened at all | Same, and the error names the likely cause: on Windows only one process may hold a COM port, so the usual answer is that `RainMonT.exe` is still running. |
 | Multicast send fails | Logged (first failure, then every 60th) and the loop carries on. |
 | The log cannot be written | Falls back to the console with a `==LOGGING==` line on stderr. Nothing about a log file may stop the bridge from running. |
-| A second copy is started | Refuses, via a loopback-port mutex on 50816. The dome server uses 50815. |
+| A second copy is started | Refuses, via a loopback-port mutex on 50816 (the dome server uses 50815). A start that finds the port held first waits up to 10 s, saying so on stderr, so a restart typed right after a Ctrl-C comes up on its own instead of racing the old bridge's shutdown. A refusal after the grace is real: the old process is still alive. |
+| Ctrl-C does not stop it | The first Ctrl-C asks the loop to finish its cycle and close the serial port; it also restores the default handler, so a **second** Ctrl-C kills the process outright — even one wedged inside a serial driver call, where the polite handler can never run — and the kill releases the mutex port for the next start. |
 
 ## During changeover
 

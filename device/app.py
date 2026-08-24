@@ -19,6 +19,7 @@ import os
 import signal
 import socket
 import sys
+import time
 import traceback
 from enum import IntEnum
 from socketserver import ThreadingMixIn
@@ -56,20 +57,46 @@ _SINGLE_INSTANCE_PORT = 50817
 _instance_guard = None
 _shutdown_signal = None
 
+# How long a start will wait for the port before giving up. A restart typed the
+# moment the old server was interrupted lands while that server is still
+# stopping -- the monitor thread join alone is allowed 5 s, and the dome-closer
+# may be mid HTTP call. Refusing instantly turns that race into a startup
+# failure; waiting a bounded moment turns it into a clean start. A genuinely
+# running server keeps the port for its whole life, so after the grace the
+# refusal below is real. Same numbers as Greenhill-DomeShutter.
+_GUARD_GRACE_SECONDS = 10.0
+_GUARD_POLL_SECONDS = 0.25
+
 weather_dev = None
 
 
-def acquire_single_instance_lock() -> bool:
+def acquire_single_instance_lock(grace_seconds=0.0) -> bool:
+    """Bind the loopback mutex, retrying a held port for `grace_seconds`.
+
+    The wait is announced on stderr once; 0 means a single attempt.
+    """
     global _instance_guard
-    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        guard.bind(('127.0.0.1', _SINGLE_INSTANCE_PORT))
-        guard.listen(1)
-    except OSError:
-        guard.close()
-        return False
-    _instance_guard = guard
-    return True
+    deadline = time.monotonic() + grace_seconds
+    announced = False
+    while True:
+        guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            guard.bind(('127.0.0.1', _SINGLE_INSTANCE_PORT))
+            guard.listen(1)
+        except OSError:
+            guard.close()
+            if time.monotonic() >= deadline:
+                return False
+            if not announced:
+                announced = True
+                print(f'==STARTUP== The weather-server mutex port is still '
+                      f'held -- a previous instance may still be shutting '
+                      f'down. Waiting up to {grace_seconds:.0f} s for it to '
+                      f'let go.', file=sys.stderr)
+            time.sleep(_GUARD_POLL_SECONDS)
+            continue
+        _instance_guard = guard
+        return True
 
 
 def _signal_shutdown(signum, frame):
@@ -95,6 +122,28 @@ def install_signal_handlers() -> list:
             continue
         installed.append(signame)
     return installed
+
+
+def _restore_default_signal_handlers():
+    """Make any further Ctrl-C or kill terminate the process outright.
+
+    Called on the way INTO the shutdown path. From that point every remaining
+    handler is Python-level, and a Python-level handler only runs between
+    bytecodes -- so if weather_dev.stop() blocks (a thread join, a socket, the
+    dome-closer mid HTTP call), pressing Ctrl-C again would do NOTHING, and the
+    stuck process would sit on the single-instance port refusing every restart.
+    SIG_DFL acts below the interpreter and kills a stuck process too.
+    _signal_shutdown makes the same promise for a second SIGTERM; this extends
+    it to the Ctrl-C path, where no handler of ours ever ran.
+    """
+    for signame in ('SIGINT', 'SIGTERM', 'SIGBREAK'):
+        sig = getattr(signal, signame, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass                    # not supported here, or not the main thread
 
 
 class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
@@ -252,10 +301,13 @@ def main(simulate=False):
     # and rotating means renaming a file the incumbent still has open: on
     # Windows that raises, so startup would die with an unexplained log-file
     # error instead of the message below.
-    if not acquire_single_instance_lock():
+    if not acquire_single_instance_lock(grace_seconds=_GUARD_GRACE_SECONDS):
         print('==STARTUP FAILED== Another Greenhill weather server is already '
               'running. Two of them would both join the sensor streams and '
-              'both answer on the Alpaca port; refusing to start.',
+              'both answer on the Alpaca port; refusing to start. If no other '
+              'weather server is running, the previous one is still alive but '
+              'stuck shutting down: find the python process holding TCP port '
+              f'{_SINGLE_INSTANCE_PORT} and kill it, then start again.',
               file=sys.stderr)
         sys.exit(1)
 
@@ -302,6 +354,11 @@ def main(simulate=False):
                         f'Time stamps are UTC.')
             httpd.serve_forever()
     finally:
+        # From here on, a second Ctrl-C (or kill) must terminate us outright:
+        # the stop below can block, where Python-level handlers never run and
+        # the process would squat the single-instance port until someone found
+        # it in the task manager.
+        _restore_default_signal_handlers()
         if _shutdown_signal is not None:
             logger.info(f'==SIGNAL== {signal.Signals(_shutdown_signal).name} '
                         f'received; stopping.')
