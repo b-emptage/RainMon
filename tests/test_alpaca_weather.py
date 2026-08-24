@@ -434,3 +434,87 @@ class TestRouteOneArming:
         body = put(client, SM + 'action',
                    {'Action': 'Greenhill:GetWeatherStatus', 'Parameters': ''}).json
         assert json.loads(body['Value'])['domeClose']['state'] == 'not armed'
+
+
+class TestStreamSilenceGuard:
+    """A joined stream that never delivers must name itself in the log.
+
+    The failure where the socket joins cleanly on a multi-homed box but no
+    packet ever arrives -- wrong interface, firewall, or IGMP -- is the one this
+    design is most exposed to, and the one that was hardest to diagnose because
+    nothing said it was happening. This guard is that missing line.
+    """
+
+    def _service(self):
+        import logging
+
+        from greenhill.core.config import WeatherConfig
+        from weatherdevice import GreenhillWeather
+
+        logger = logging.getLogger('greenhill-silence-test')
+        multicast = {'wind_group': '239.192.0.4', 'wind_port': 60004,
+                     'rain_group': '239.192.0.5', 'rain_port': 60005,
+                     'interface': '0.0.0.0'}
+        return GreenhillWeather(WeatherConfig(), multicast, logger)
+
+    def test_a_silent_joined_stream_is_flagged_and_a_fresh_one_is_not(self, caplog):
+        from weatherdevice import STREAM_SILENCE_WARNING_S
+
+        service = self._service()
+        now = STREAM_SILENCE_WARNING_S + 5.0
+        # rain arrived a moment ago; wind has been silent since startup.
+        last_arrival = {'wind': 0.0, 'rain': now - 1.0}
+        warned = set()
+        with caplog.at_level('ERROR'):
+            service._warn_silent_streams(now, {'wind', 'rain'}, last_arrival,
+                                         warned)
+        assert '==STREAM SILENT==' in caplog.text
+        assert 'wind' in caplog.text
+        assert warned == {'wind'}            # rain was fresh, so not flagged
+
+    def test_it_warns_once_per_silent_episode(self, caplog):
+        service = self._service()
+        last_arrival = {'wind': 0.0}
+        warned = set()
+        service._warn_silent_streams(100.0, {'wind'}, last_arrival, warned)
+        assert warned == {'wind'}
+        caplog.clear()
+        with caplog.at_level('ERROR'):
+            service._warn_silent_streams(160.0, {'wind'}, last_arrival, warned)
+        assert '==STREAM SILENT==' not in caplog.text
+
+    def test_a_recovered_stream_going_silent_again_is_warned_afresh(self, caplog):
+        service = self._service()
+        last_arrival = {'wind': 0.0}
+        warned = set()
+        service._warn_silent_streams(100.0, {'wind'}, last_arrival, warned)
+        # A packet arrives: the loop stamps the arrival and re-arms the warning.
+        last_arrival['wind'] = 120.0
+        warned.discard('wind')
+        caplog.clear()
+        with caplog.at_level('ERROR'):
+            service._warn_silent_streams(160.0, {'wind'}, last_arrival, warned)
+        assert '==STREAM SILENT==' in caplog.text
+
+    def test_a_healthy_stream_is_never_flagged(self, caplog):
+        service = self._service()
+        # Both arrived about a second ago -- ordinary traffic.
+        last_arrival = {'wind': 199.0, 'rain': 199.5}
+        warned = set()
+        with caplog.at_level('ERROR'):
+            service._warn_silent_streams(200.0, {'wind', 'rain'}, last_arrival,
+                                         warned)
+        assert '==STREAM SILENT==' not in caplog.text
+        assert warned == set()
+
+    def test_only_joined_streams_are_considered(self, caplog):
+        # If a stream's join failed it is absent from `joined`, and the startup
+        # log already reported it -- the silence guard must not double-report.
+        service = self._service()
+        last_arrival = {'rain': 0.0}
+        warned = set()
+        with caplog.at_level('ERROR'):
+            service._warn_silent_streams(1000.0, {'rain'}, last_arrival, warned)
+        assert 'rain' in caplog.text
+        assert 'wind' not in caplog.text
+        assert warned == {'rain'}

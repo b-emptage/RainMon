@@ -102,6 +102,14 @@ _RAIN_SENSORS = ('RainRate', 'Temperature')
 # failure this whole system exists to catch.
 EVALUATION_INTERVAL_S = 1.0
 
+# How long a JOINED stream may go without a single packet before the loop says
+# so, loudly. A join that succeeds but never delivers is the multi-homing,
+# firewall or IGMP failure this design is most exposed to: the socket is happy,
+# the verdict just ages into UNSAFE, and nothing names the cause. Set well above
+# the staleness ages (15 s) so a few dropped datagrams never trip it -- this is
+# for a stream that was never really there, not an ordinary gap.
+STREAM_SILENCE_WARNING_S = 30.0
+
 # A calm, valid anemometer datagram in the real wire shape: the proprietary UDP
 # wrapper, an NMEA 0183 TAG block, then an MWV sentence with a correct checksum.
 # Simulated mode feeds this so it drives the SAME parse path the live instrument
@@ -259,10 +267,17 @@ class GreenhillWeather(object):
 
     def _run(self):
         last_evaluated = 0.0
+        # Streams whose join SUCCEEDED. Only these can be "silent" in the sense
+        # that matters: a failed join was already logged loudly at startup.
+        joined = set(self._reader.stream_names)
+        last_arrival = {name: 0.0 for name in joined}
+        silence_warned = set()          # type: set
         while not self._stop.is_set():
             try:
                 for stream, payload in self._reader.poll(0.5):
                     now = self._now()
+                    last_arrival[stream] = now
+                    silence_warned.discard(stream)   # re-arm on recovery
                     if stream == 'rain':
                         try:
                             self._evaluator.rain.update(
@@ -276,6 +291,8 @@ class GreenhillWeather(object):
                             pass
 
                 now = self._now()
+                self._warn_silent_streams(now, joined, last_arrival,
+                                          silence_warned)
                 if now - last_evaluated >= EVALUATION_INTERVAL_S:
                     last_evaluated = now
                     state = self._evaluator.update(now)
@@ -289,6 +306,28 @@ class GreenhillWeather(object):
                 # that answers cheerfully with a frozen verdict.
                 self._logger.exception('weather loop error: %s', exc)
                 time.sleep(1.0)
+
+    def _warn_silent_streams(self, now, joined, last_arrival, silence_warned):
+        # type: (float, set, Dict[str, float], set) -> None
+        """Log once, loudly, for any JOINED stream that has gone quiet.
+
+        This is the line that was missing while a multi-homed box received only
+        one sensor: the socket joined cleanly, so the fault named nothing and the
+        verdict merely aged into UNSAFE. Warned once per silent episode -- the
+        arrival loop re-arms it -- so a genuinely dead stream does not fill the
+        log, and a stream that recovers and dies again is reported afresh.
+        """
+        for name in sorted(joined):
+            silence = now - last_arrival.get(name, 0.0)
+            if silence > STREAM_SILENCE_WARNING_S and name not in silence_warned:
+                silence_warned.add(name)
+                self._logger.error(
+                    '==STREAM SILENT== joined the %s stream but received no '
+                    'packets in %.0fs. The join succeeded, so the cause is the '
+                    'interface, the firewall or IGMP -- NOT a dead sensor. On a '
+                    'multi-homed box set [multicast] interface in '
+                    'device/config.toml to the NIC that carries the sensors, '
+                    'then check the firewall and the switch.', name, silence)
 
     def _run_simulated(self):
         """Dry and calm, once a second, for Conform and for bench work."""

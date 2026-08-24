@@ -63,6 +63,13 @@ class MulticastReader(object):
     def stream_count(self):
         return len(self._sockets)
 
+    @property
+    def stream_names(self):
+        # type: () -> List[str]
+        """Names of the streams whose join succeeded -- the ones actually being
+        listened to, as opposed to those recorded in `failures`."""
+        return list(self._sockets.values())
+
     def poll(self, timeout=0.5):
         # type: (float) -> List[Tuple[str, bytes]]
         """Return whatever has arrived, as (stream name, payload)."""
