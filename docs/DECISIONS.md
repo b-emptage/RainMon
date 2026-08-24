@@ -147,3 +147,52 @@ positions and its 30-degree north offset. Both are configuration now, so
 correcting them is a config edit rather than a release — but wind direction
 should not be trusted until the offset has been checked against a known
 reference.
+
+## Phase 3 — the Alpaca devices (done)
+
+**Two devices on one server, port 11112.** `SafetyMonitor` carries the GO/NOGO,
+`ObservingConditions` carries the telemetry, and both are views onto a single
+safety evaluator so they cannot disagree. Port 11112 because the equipment
+Alpaca server on that machine already holds 11111; for the same reason UDP
+discovery will not bind there, which is expected and harmless.
+
+**The monitoring runs whether or not any client is connected**, and `Connected`
+defaults to true. Two reasons: Arcsecond polls `Connected` but never sets it, so
+a device waiting to be connected would be recorded as disconnected forever and
+never yield a reading; and the direct dome-close route has no ASCOM client of
+its own, so tying the thread to a client connection would quietly disarm it.
+This is a deliberate difference from the dome server, where disconnecting
+de-energises the motors on purpose.
+
+**`IsSafe` never returns an error.** Most clients treat an error from a safety
+monitor as "no opinion" and carry on observing, so a failure there would read as
+permission. It answers false and puts the reason elsewhere.
+
+**Sensors this site does not have report "not implemented" rather than zero.**
+Arcsecond caches that and stops asking. A fabricated humidity would otherwise be
+recorded every minute as though it were measured.
+
+**A vendor action publishes the reason.** ASCOM gives a safety monitor one bit,
+and this site has four independent reasons to close. `Greenhill:GetWeatherStatus`
+returns which condition is holding, how each detector reads and how old both
+streams are — so an operator can see why without reading the log.
+
+**Two defects found in the ASCOM sample code we inherited.** Its "Exception"
+classes are not Python exceptions at all but response payloads, so raising one
+fails; and its uncaught-exception handler used a calling convention Falcon
+dropped three major versions ago, meaning it crashed instead of reporting
+whatever had gone wrong. Both fixed here. **The second one is still present in
+Greenhill-DomeShutter and should be fixed there too.**
+
+**Conform runs in CI against both device types**, plus a Python 3.8 job that
+byte-compiles and tests everything shipped to the Windows 7 box — the shared
+protocol module is imported by both machines, and that job is what stops a
+newer idiom reaching the one that cannot run it.
+
+**Delivered:** both Alpaca devices, the monitoring service, a simulator, CI for
+conformance and for the Windows 7 interpreter, and 213 hardware-free tests.
+Verified end to end over real multicast: sensor stream to fused verdict to
+latch to HTTP.
+
+**Not yet verified:** Conform has only been run against the simulator. It should
+be run against the real installation before the observatory relies on it.

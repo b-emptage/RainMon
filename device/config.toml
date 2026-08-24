@@ -1,0 +1,97 @@
+title = "Greenhill Weather (Alpaca)"
+
+[network]
+ip_address = ''             # Any address
+port = 11112                # 11111 on this box is the equipment server
+
+[server]
+location = 'Greenhill Observatory, Tasmania'
+verbose_driver_exceptions = true
+
+[device]
+sync_write_connected = true
+
+# ---------------------------------------------------------------------------
+# The two sensor streams.
+#
+# The anemometer's group is set by the instrument itself and is not ours to
+# change. The rain group is the bridge's, and MUST MATCH rain_broadcaster.ini
+# on the Windows 7 box.
+#
+# Both machines must be on the same layer-2 segment, or IGMP must be configured
+# for 239.192.0.0/14. The Windows Firewall on this box must allow the inbound
+# UDP -- a blocked stream looks exactly like a dead sensor, which is unsafe but
+# unhelpful.
+# ---------------------------------------------------------------------------
+[multicast]
+wind_group = '239.192.0.4'
+wind_port = 60004
+rain_group = '239.192.0.5'
+rain_port = 60005
+interface = ''              # blank = let the OS choose; set it if multi-homed
+
+# ---------------------------------------------------------------------------
+# WEATHER THRESHOLDS AND LATCH TIMINGS.  Full explanation in docs/SAFETY.md.
+#
+# Everything is SI. Metres per second, not km/h: ASCOM ObservingConditions is
+# defined in m/s and Arcsecond stores m/s, so a km/h value here would be a
+# threshold wrong by a factor of 3.6.
+#
+# Anything omitted falls back to the default in greenhill/core/config.py.
+# ---------------------------------------------------------------------------
+[weather]
+
+# --- wind ---
+wind_sustained_max_ms = 5.5556      # 20 km/h, 60 s mean
+wind_gust_max_ms = 8.3333           # 30 km/h, strongest 3 s average in 2 min
+
+# PROVISIONAL -- the anemometer's sentence format has never been written down.
+# These are the positions the legacy display reads. Confirm them with
+# tools/record_streams.py, which prints a real sentence field by field.
+wind_direction_field = 2
+wind_speed_field = 4
+
+# PROVISIONAL -- the legacy display adds 30 degrees, with no note saying why;
+# presumably a mounting correction. Carried forward so behaviour does not
+# change silently. DO NOT TRUST WindDirection until this has been checked
+# against a known reference.
+wind_north_offset_deg = 30.0
+
+# --- rain ---
+# Sections, not detectors: each detector has two that trigger independently, so
+# one detector reporting W reaches this on its own.
+rain_wet_sections_trigger = 2
+
+# A single wet section clearing within this long is a real raindrop evaporating
+# off a heated sensor. One that persists longer is contamination -- droppings,
+# an insect, a failed sensor -- and is NOT rain.
+raindrop_window_s = 10.0
+
+# How many detectors must report a usable state for the reading to count. With
+# three installed, two means one failure does not blind the observatory while a
+# single survivor is not asked to speak for the whole site.
+rain_min_observing_detectors = 2
+
+# --- staleness and latching ---
+# Streams arrive about once a second; these allow plenty of dropped datagrams
+# before declaring a source dead.
+rain_max_age_s = 15.0
+wind_max_age_s = 15.0
+
+# Unsafe after a restart until both streams have been healthy this long.
+settle_s = 30.0
+
+# After rain, everything must stay dry this long before the latch releases.
+# Comfortably above the 2-5 minute drying time of a heated sensor. Note the
+# countdown FREEZES whenever the sensors cannot be read: the clear period is
+# ten minutes of observed dryness, not ten minutes of not looking.
+rain_clear_s = 600.0
+
+# Wind needs far less -- nothing has to dry, it only has to stop gusting.
+wind_clear_s = 120.0
+
+[logging]
+log_level = 'INFO'
+log_to_stdout = true
+max_size_mb = 5
+num_keep_logs = 10

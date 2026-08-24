@@ -1,0 +1,168 @@
+name: ascom-conformance
+
+# Runs ASCOM Conform Universal against the weather server backed by synthetic
+# dry, calm weather (device/simulate.py). Conform is the arbiter of whether
+# these are well-behaved Alpaca devices: the response envelope, ClientID and
+# ClientTransactionID handling, and which optional members must raise
+# NotImplementedException. None of that is checkable from our own test suite,
+# which can only assert what we already believe.
+#
+# BOTH device types are checked. They are two views onto one weather service,
+# and a fault in the shared responders would otherwise show up on whichever
+# happened to be tested.
+#
+# It runs here rather than on a developer machine because ConformU ships as a
+# Linux x64 binary and the runner is Linux x64 -- no emulation, no local
+# install.
+#
+# Not a substitute for running Conform against the real installation before it
+# is trusted to close the dome: the simulator feeds perfect weather and cannot
+# reproduce a stalled sensor or a dropped stream.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Pinned so a new ConformU release cannot turn a green build red without a
+  # deliberate bump. https://github.com/ASCOMInitiative/ConformU/releases
+  CONFORMU_VERSION: v4.4.0
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run the test suite
+        run: python -m pytest tests/ -q
+
+  python38:
+    # The rain bridge runs on Windows 7, whose last supported CPython is 3.8,
+    # and greenhill/rain_protocol.py is imported by BOTH ends. This job is what
+    # stops a 3.9+ idiom reaching the machine that cannot run it -- a failure
+    # that would otherwise surface only on the observatory floor.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+      - name: Install dependencies
+        run: pip install pytest pyserial
+      - name: Byte-compile the code that ships to Windows 7
+        run: |
+          python -m py_compile \
+            rain_broadcaster.py \
+            greenhill/__init__.py \
+            greenhill/rain_protocol.py \
+            greenhill/rain_serial.py \
+            greenhill/broadcaster.py
+      - name: Run the bridge and protocol tests on 3.8
+        run: python -m pytest tests/test_rain_protocol.py tests/test_rain_serial.py -q
+
+  conform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [observingconditions, safetymonitor]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install server dependencies
+        run: pip install falcon
+
+      - name: Download Conform Universal
+        run: |
+          curl -sSfL -o /tmp/conformu.tar.xz \
+            "https://github.com/ASCOMInitiative/ConformU/releases/download/${CONFORMU_VERSION}/conformu.linux-x64.tar.xz"
+          mkdir -p /tmp/conformu
+          tar -xJf /tmp/conformu.tar.xz -C /tmp/conformu
+          chmod +x /tmp/conformu/conformu
+          # ConformU is .NET and aborts at startup without ICU. Present on the
+          # runner image today; installed explicitly so an image change cannot
+          # break this silently.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libicu-dev
+          /tmp/conformu/conformu --version
+
+      - name: Start the weather server against synthetic weather
+        working-directory: device
+        run: |
+          nohup python simulate.py > /tmp/weather-server.log 2>&1 &
+          echo $! > /tmp/weather-server.pid
+          for _ in $(seq 1 60); do
+            if curl -sf -m 1 "http://127.0.0.1:11112/api/v1/${{ matrix.device }}/0/name?ClientID=1&ClientTransactionID=1" >/dev/null; then
+              echo "Weather server is up."; exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::Weather server did not start."; cat /tmp/weather-server.log; exit 1
+
+      - name: Wait out the settle period
+        # The service starts UNSAFE by design and clears only once both streams
+        # have been healthy for the settle period. Conform should exercise it in
+        # its steady state, not mid-warm-up.
+        run: sleep 40
+
+      # ConformU's exit code is the error count, so each step gates the build on
+      # its own. The evaluate step then names failing members in the log rather
+      # than leaving them in an uploaded artifact.
+      - name: Alpaca protocol conformance
+        run: |
+          mkdir -p /tmp/results
+          # Writes only a log, no results file, so its verdict is the exit code.
+          set +e
+          /tmp/conformu/conformu alpacaprotocol \
+            "http://127.0.0.1:11112/api/v1/${{ matrix.device }}/0" \
+            --logfilename /tmp/results/alpacaprotocol.log
+          status=$?
+          grep -E 'Congratulations|Found .* error|ERROR' /tmp/results/alpacaprotocol.log || true
+          exit $status
+
+      - name: ASCOM interface conformance
+        run: |
+          mkdir -p /tmp/results
+          set +e
+          /tmp/conformu/conformu conformance \
+            "http://127.0.0.1:11112/api/v1/${{ matrix.device }}/0" \
+            --logfilename /tmp/results/conformance.log \
+            --resultsfile /tmp/results/conformance.json
+          status=$?
+          grep -E 'Congratulations|Found .* error' /tmp/results/conformance.log || true
+          exit $status
+
+      - name: Evaluate results
+        if: always()
+        run: python .github/scripts/check_conformance.py /tmp/results
+
+      - name: Stop the weather server
+        if: always()
+        run: |
+          kill "$(cat /tmp/weather-server.pid)" 2>/dev/null || true
+          sleep 2
+          echo '--- weather server log (tail) ---'
+          tail -50 /tmp/weather-server.log || true
+
+      - name: Upload Conform logs and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-${{ matrix.device }}
+          path: |
+            /tmp/results/
+            /tmp/weather-server.log
+          if-no-files-found: warn

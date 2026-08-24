@@ -11,7 +11,7 @@ Two machines:
 * **Windows 11 box** — the weather service. Subscribes to the rain stream and
   to the anemometer's own multicast, fuses them into a safety state, and serves
   `ObservingConditions` and `SafetyMonitor` over Alpaca.
-  See [docs/SAFETY.md](docs/SAFETY.md). The Alpaca layer is not yet built.
+  See [docs/SAFETY.md](docs/SAFETY.md) and [docs/ALPACA.md](docs/ALPACA.md).
 
 On a NOGO the dome is closed by two independent routes: directly, by an Alpaca
 client against the dome server (~1–2 s), and by Arcsecond's own safety
@@ -26,8 +26,8 @@ phase plan.
 |---|---|---|
 | 1 | Rain bridge and stream recorder | **done** |
 | 2 | Fusion, latching and watchdogs (Win11) | **done** |
-| 3 | Alpaca server: ObservingConditions + SafetyMonitor | next |
-| 4 | Route 1: direct dome close | |
+| 3 | Alpaca server: ObservingConditions + SafetyMonitor | **done** |
+| 4 | Route 1: direct dome close | next |
 | 5 | Arcsecond registration and condition set | |
 | 6 | UI and speaker relocated; `RainMonT.exe` retired | |
 
