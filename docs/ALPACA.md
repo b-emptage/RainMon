@@ -122,9 +122,10 @@ ordinary Python exceptions (`SensorNotFitted`, `UnknownSensor`,
 `HTTPInternalServerError` has been keyword-only since Falcon 3, so the
 positional call in the AlpycaDevice sample raises a `TypeError` from inside the
 handler whose job is to report errors — replacing the real fault with a
-confusing one at the worst possible moment. Fixed here.
-**`Greenhill-DomeShutter` still carries this bug** (`device/app.py`), and it
-should be fixed there too.
+confusing one at the worst possible moment. Fixed here, and since fixed in
+`Greenhill-DomeShutter` too (`device/app.py`), which inherited it from the same
+sample — with a regression test that breaks a responder deliberately, because
+nothing had ever made one fail.
 
 ## Testing
 

@@ -181,8 +181,8 @@ streams are — so an operator can see why without reading the log.
 classes are not Python exceptions at all but response payloads, so raising one
 fails; and its uncaught-exception handler used a calling convention Falcon
 dropped three major versions ago, meaning it crashed instead of reporting
-whatever had gone wrong. Both fixed here. **The second one is still present in
-Greenhill-DomeShutter and should be fixed there too.**
+whatever had gone wrong. Both fixed here, and the second one fixed in
+Greenhill-DomeShutter as well, which inherited it from the same sample.
 
 **Conform runs in CI against both device types**, plus a Python 3.8 job that
 byte-compiles and tests everything shipped to the Windows 7 box — the shared
