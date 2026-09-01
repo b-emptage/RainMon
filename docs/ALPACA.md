@@ -154,10 +154,14 @@ weather and cannot reproduce a stalled sensor or a dropped stream.
 
 ## Not yet done
 
-* Route 1, the direct Alpaca close to the dome server (Phase 4).
-* Registration in arcsecond-local, and the condition set (Phase 5).
 * No Windows service packaging. Note that a service stop arrives as neither a
   signal nor a console event, so packaging one means wiring its stop request
   into the same shutdown path.
-* The anemometer's field positions and north offset are still **provisional** —
-  see [SAFETY.md](SAFETY.md).
+* Conform has only been run against `simulate.py`, never against the real
+  installation.
+
+Done since this document was first written: the direct dome close (Phase 4, see
+[DOME_CLOSE.md](DOME_CLOSE.md)), registration in arcsecond-local, and the
+anemometer's sentence format, which a capture settled — it is parsed as NMEA
+now, not by field index. The north offset is confirmed correct by the
+observatory.

@@ -329,3 +329,55 @@ only the two numbers are open.
 condition set (a checklist is in `docs/ARCSECOND_SETUP.md`), confirm the north
 offset against a known reference, and do a dry-run close before arming the
 direct route.
+
+## Phase 6 — the weather window (done)
+
+The astronomer keeps the display and the spoken alerts, and they no longer
+depend on anything else being alive.
+
+**It listens and nothing else.** The window joins the same two multicast
+streams everything else reads and draws what they say. It holds no serial port,
+sends no dome commands, and never talks to Arcsecond. Three consequences worth
+having:
+
+* it runs on **any machine on the LAN, and on several at once** — the old
+  monitor could only run on the box holding the serial port;
+* it keeps working when the weather service or Arcsecond are down, which is
+  exactly when someone wants to look at it;
+* **closing it stops nothing.** In the software this replaces the window *was*
+  the safety system, and closing it stopped the dome protection with it.
+
+**The display is the one the operators already read** — the same site map, the
+same status colours, the same compass and the same green-to-red speed ramp.
+Readouts stay in km/h because that is what the observatory thinks in;
+everything beneath, and everything published over Alpaca, is m/s, and the
+conversion happens in one place.
+
+**The window's verdict is its own, and it says so.** It computes from the same
+core as the weather service, so the numbers agree, but it does not control the
+dome. Pointed at the weather service it also shows the observatory's real
+verdict and flags a disagreement — the two latches are not in step, having
+started at different times, and an astronomer looking at a green panel beside a
+closed roof deserves an explanation rather than a puzzle.
+
+**Three deliberate silences**, because the failure mode of a spoken alert is
+not silence but nagging — one that repeats gets muted, and a muted alert
+protects nobody. Nothing is said on the first update, or the window would greet
+whoever opens it with rain that stopped an hour ago. Nothing is called broken
+for the first twenty seconds, because every source looks dead before its first
+packet. And "rain sensors dry" is only ever said from a known-wet state to a
+known-dry one: wet then unreadable is a fault, and announcing dryness there
+would be the most misleading sentence the system could utter.
+
+**The new announcement is the fault one** — "rain sensors not responding". The
+old monitor could not say it, because it could not tell a dry night from a dead
+sensor. It is the alert to keep if only one is kept.
+
+**It runs without a voice.** On a Mac, a Linux box, or Windows without pywin32,
+alerts are logged and everything else works. The window is kept 3.8-compatible
+so it can also run on the Windows 7 box, where the display it replaces has
+always lived.
+
+**Delivered:** the window, the alert policy, the speaker, a frozen-build spec,
+27 new tests (381 in total), and the safety core added to the Python 3.8 CI job
+so nothing that ships to the old machine can drift past it.

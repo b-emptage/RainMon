@@ -61,12 +61,28 @@ jobs:
         run: |
           python -m py_compile \
             rain_broadcaster.py \
+            greenhill_monitor.py \
             greenhill/__init__.py \
             greenhill/rain_protocol.py \
             greenhill/rain_serial.py \
-            greenhill/broadcaster.py
-      - name: Run the bridge and protocol tests on 3.8
-        run: python -m pytest tests/test_rain_protocol.py tests/test_rain_serial.py -q
+            greenhill/broadcaster.py \
+            greenhill/core/config.py \
+            greenhill/core/rain.py \
+            greenhill/core/receiver.py \
+            greenhill/core/safety.py \
+            greenhill/core/wind.py \
+            greenhill/ui/__init__.py \
+            greenhill/ui/alerts.py \
+            greenhill/ui/app.py \
+            greenhill/ui/speaker.py
+      - name: Run the tests that must pass on 3.8
+        # The bridge and the window both run on machines that cannot have
+        # anything newer, and they share the safety core with the Windows 11
+        # service, so that travels with them.
+        run: |
+          python -m pytest tests/test_rain_protocol.py tests/test_rain_serial.py \
+            tests/test_rain_logic.py tests/test_wind.py tests/test_safety.py \
+            tests/test_ui_alerts.py tests/test_ui_speaker.py -q
 
   conform:
     runs-on: ubuntu-latest

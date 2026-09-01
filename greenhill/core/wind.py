@@ -260,6 +260,17 @@ class WindMonitor(object):
             best = max(best, running / (end - start + 1))
         return best
 
+    def latest_speed_ms(self, now):
+        # type: (float) -> Optional[float]
+        """The most recent sample, for the "inst" readout the operators know.
+
+        Not used by any threshold -- a single sample is noise, which is why the
+        rules run on the mean and on a three-second gust -- but it is what makes
+        a display feel live rather than averaged into stillness.
+        """
+        window = self._within(now, self._config.wind_mean_window_s)
+        return window[-1][2] if window else None
+
     def peak_ms(self, now):
         # type: (float) -> Optional[float]
         """Fastest single sample in the gust window. Diagnostic only -- the
@@ -358,9 +369,9 @@ class WindMonitor(object):
         mean = self.mean_speed_ms(now)
         gust = self.gust_ms(now)
         if mean is not None and mean > self._config.wind_sustained_max_ms:
-            reasons.append('sustained wind {:.1f} m/s over {:.0f} m/s'.format(
+            reasons.append('sustained wind {:.1f} m/s over {:.2f} m/s'.format(
                 mean, self._config.wind_sustained_max_ms))
         if gust is not None and gust > self._config.wind_gust_max_ms:
-            reasons.append('gust {:.1f} m/s over {:.0f} m/s'.format(
+            reasons.append('gust {:.1f} m/s over {:.2f} m/s'.format(
                 gust, self._config.wind_gust_max_ms))
         return (WINDY, reasons) if reasons else (CALM, [])
