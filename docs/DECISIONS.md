@@ -57,23 +57,27 @@ dome the moment the sensors dry, while the sensors are still wet.
   alone never fires.
 * RESET stays a manual operation at the machine.
 
-## Raised for Arcsecond (separate track)
+## Raised for Arcsecond (separate track) — all three fixed
 
-Three issues in `arcsecond-back` that undermine the backup route:
+Three issues in `arcsecond-back` undermined the backup route. **All are fixed
+and merged into `staging`.**
 
-1. An unreachable sensor writes an empty weather point, whose missing values
-   are skipped by the evaluator, which then decides GO. **Sensor failure
-   currently reads as good weather.**
-2. No staleness bound — the newest reading counts as live regardless of age.
-3. No `IsSafe` quantity, so a SafetyMonitor cannot reach a safety decision.
+1. An unreachable sensor wrote an empty weather point, whose missing values
+   were skipped by the evaluator, which then decided GO — **sensor failure read
+   as good weather.** Live outdoor readings now fail closed.
+2. No staleness bound — the newest reading counted as live regardless of age.
+   Readings now expire after five minutes.
+3. No `IsSafe` quantity, so a SafetyMonitor could not reach a safety decision.
+   `site__is_safe` now exists.
 
-Item 1 matters most: the Windows 11 box now hosts arcsecond-local, the
-equipment server and the weather service, so it is a single point of failure
-for both close routes.
+Item 1 mattered most: the Windows 11 box hosts arcsecond-local, the equipment
+server and the weather service, so it is a single point of failure for both
+close routes.
 
-**Recommended, out of scope here:** a dome-side deadman — the dome closes
+**Accepted, and out of scope here:** a dome-side deadman — the dome closes
 itself if it has not heard from the weather service in N minutes. It is the
-only protection that survives the Windows 11 box failing.
+only protection that survives the Windows 11 box failing, and the observatory
+has taken it into its upgrade plan.
 
 ## Phase 1 — rain bridge (done)
 
@@ -90,10 +94,10 @@ exhaust memory.
 **Delivered:** the bridge, a stream recorder, a seven-scenario simulator,
 76 hardware-free tests, and operator documentation.
 
-**Open question for Bryn:** the anemometer's sentence format is undocumented.
-The current display reads direction and speed from fixed positions 2 and 4
-behind a silent catch-all. Running the recorder for a day settles it, and
-every wind threshold depends on the answer.
+**Open question for Bryn** *(settled — see Phase 5)*: the anemometer's sentence
+format is undocumented. The current display reads direction and speed from fixed
+positions 2 and 4 behind a silent catch-all. Running the recorder for a day
+settles it, and every wind threshold depends on the answer.
 
 ## Phase 2 — the safety verdict (done)
 
@@ -142,11 +146,10 @@ happened rather than against anyone's memory of it.
 and a replay tool, and 158 hardware-free tests. Verified end to end over real
 multicast.
 
-**Still provisional, pending the recorder run:** the anemometer's field
-positions and its 30-degree north offset. Both are configuration now, so
-correcting them is a config edit rather than a release — but wind direction
-should not be trusted until the offset has been checked against a known
-reference.
+**Still provisional, pending the recorder run** *(both since settled)*: the
+anemometer's field positions and its 30-degree north offset. The capture
+replaced the field indices with real NMEA parsing, and the observatory has
+confirmed the offset is correct.
 
 ## Phase 3 — the Alpaca devices (done)
 
@@ -287,10 +290,10 @@ the README and the safety document say. The consequence the observatory should
 expect: **restarting the weather service closes the dome**, because it comes up
 having not yet seen the sky. That is the design working, not a fault, but it is
 disruptive if unexpected.
-## Phase 5 — Arcsecond (backend done, site configuration pending)
+## Phase 5 — Arcsecond (done)
 
-**The three holes in Arcsecond's own safety evaluator are fixed**, on the
-`safety-fail-closed` branch of `arcsecond-back`. The first of them mattered
+**The three holes in Arcsecond's own safety evaluator are fixed**, and merged
+into `staging` in `arcsecond-back`. The first of them mattered
 most: an unreachable sensor wrote a weather reading with no values, the
 evaluator skipped conditions it could not evaluate, and with nothing triggered
 the answer was GO — so a sensor failure was indistinguishable from good weather.
@@ -318,17 +321,15 @@ relative bearing it was meant for.
 The rain stream over the same window was flawless: 893 packets, no gaps, all
 three detectors reporting dry.
 
-**Open, and the observatory's to settle: the wind thresholds.** Against 20 km/h
-sustained and 30 km/h gust, the site would have been NOGO for that entire
-quarter of an hour — over the sustained limit in 95% of evaluations and the
-gust limit in 88%. Either it was genuinely that windy, or the limits are too
-tight for an exposed ridge. Everything else about the wind path is verified;
-only the two numbers are open.
+**The wind thresholds were queried and confirmed.** Against 20 km/h sustained
+and 30 km/h gust, the site would have been NOGO for that entire quarter of an
+hour — over the sustained limit in 95% of evaluations and the gust limit in
+88%. That was raised in case the limits were too tight for an exposed ridge;
+the observatory confirms they are the intended figures, and it was simply that
+windy.
 
-**Still to do:** register the two devices in arcsecond-local and build the
-condition set (a checklist is in `docs/ARCSECOND_SETUP.md`), confirm the north
-offset against a known reference, and do a dry-run close before arming the
-direct route.
+**The two devices are registered in arcsecond-local and reporting.** The
+checklist that got them there is in `docs/ARCSECOND_SETUP.md`.
 
 ## Phase 6 — the weather window (done)
 
@@ -381,3 +382,38 @@ always lived.
 **Delivered:** the window, the alert policy, the speaker, a frozen-build spec,
 27 new tests (381 in total), and the safety core added to the Python 3.8 CI job
 so nothing that ships to the old machine can drift past it.
+
+---
+
+## Where things stand
+
+The phase sections above are a record of what was decided as the work went
+along, and some of their open questions have since been answered in place. This
+section is the one to trust for what is actually outstanding.
+
+**All six phases are complete.** The rain bridge runs on the Windows 7 box, the
+weather service and its two Alpaca devices run on the Windows 11 box, both are
+registered in arcsecond-local and reporting, and the weather window is
+available to anyone who wants it. 381 tests.
+
+**Settled since they were first raised:**
+
+* The anemometer's format — a capture identified an Observator OMC-140 sending
+  NMEA MWV inside a proprietary wrapper, and the parser was rewritten around it.
+* The 30-degree north offset — confirmed correct by the observatory.
+* The wind thresholds — queried after a capture showed the site would have been
+  NOGO throughout; confirmed as the intended figures.
+* The three fail-open holes in Arcsecond's safety evaluator — fixed and merged.
+* Per-client Alpaca connections on the dome, and its error handler.
+
+**Still outstanding:**
+
+1. **The direct dome close is not armed.** `dome_close_enabled = false` and
+   `dome_address` is empty. Arm it after a dry-run close on the real dome, and
+   check the dome's true travel time against the 45 s re-issue window while you
+   are there.
+2. **ASCOM Conform has only been run against the simulator**, never against the
+   real installation.
+3. **A dome-side deadman**, which the observatory has taken into its upgrade
+   plan. It is the only protection that survives the Windows 11 box failing,
+   and it is not part of this work.
