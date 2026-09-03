@@ -1,2 +1,16 @@
-
 *.log*
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec.bak
+
+# Multicast captures from tools/record_streams.py. Real ones are worth keeping,
+# but deliberately, not by accident -- a night of packets is a large file.
+# The site-prefixed form (e.g. greenhill-capture.jsonl) is how --out names them
+# in practice, so ignore that too, not just the bare and dotted names.
+capture.jsonl
+*.capture.jsonl
+*-capture.jsonl
+.DS_Store

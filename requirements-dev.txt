@@ -1,0 +1,18 @@
+# Development and test dependencies. Not needed on either deployed machine.
+#
+# The tests are hardware-free and need no network: the serial port is faked,
+# the safety core is driven by synthetic packets, and the Alpaca layer is
+# exercised through Falcon's test client rather than a real socket.
+
+pytest>=6.0
+
+# The Alpaca server's only runtime dependency.
+falcon>=4.0
+
+# Imported by the bridge modules. The Windows 7 machine needs this at runtime;
+# here it is only so the modules import during collection.
+pyserial>=3.4
+
+# TOML is read with the stdlib tomllib on Python 3.11+. On the 3.8 interpreter
+# that targets Windows 7, `pip install toml` restores the fallback path in
+# device/config.py -- though the bridge itself reads an .ini and needs neither.

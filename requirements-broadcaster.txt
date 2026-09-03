@@ -1,0 +1,12 @@
+# Windows 7 bridge only. Deliberately one line long.
+#
+# PIN THE TOOLCHAIN, DO NOT UPGRADE IT. The executable that runs on the
+# Greenhill box is built from a Python 3.8 32-bit environment, which is the
+# last release supporting Windows 7, with the PyInstaller version already in
+# use there. That combination is proven in the field; a bump is the kind of
+# change that fails only on the target OS, which is the worst place to find out.
+#
+# Nothing else belongs here. The Alpaca stack, the fusion logic and the UI all
+# live on the Windows 11 side.
+
+pyserial>=3.4
