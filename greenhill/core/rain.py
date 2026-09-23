@@ -144,6 +144,13 @@ class RainMonitor(object):
             return {}
         return {d.id: d.status for d in self._last_packet.detectors}
 
+    @property
+    def detector_temps(self):
+        #type: () -> Dict(str, float)
+        if self._last_packet is None:
+            return {}
+        return {d.id: d.temperature_c for d in self._last_packet.detectors if d.temperature_c is not None}
+
     def temperature_c(self):
         # type: () -> Optional[float]
         """Mean of the detectors reporting a temperature.

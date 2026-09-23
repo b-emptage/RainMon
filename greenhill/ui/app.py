@@ -150,6 +150,7 @@ class WeatherWindow(object):
 
         self.evaluator = SafetyEvaluator(config)
         self.reader = MulticastReader()
+        # todo: set up a box to mute alerts
         self.alerts = AlertPolicy(
             repeat_seconds=float(settings.get('alert_repeat_seconds', 30.0)),
             categories=settings.get('alert_categories',
@@ -162,6 +163,7 @@ class WeatherWindow(object):
         self.status_cells = {}          # type: Dict[str, tk.Label]
         self.temp_cells = {}            # type: Dict[str, tk.Label]
         self._arrow = None
+        # todo: add secondary wedge for recent wind data
         self._wedges = []               # type: List[int]
         self._smoothed_angle = 0.0
 
@@ -351,8 +353,10 @@ class WeatherWindow(object):
             self.status_cells[name].configure(text=status, fg=foreground,
                                               bg=background)
 
-        temperature = state.temperature_c
+        # temperature = state.temperature_c  # old way
+        temperatures = state.detector_temps or {}
         for name in DETECTOR_POSITIONS:
+            temperature = temperatures.get(name, '-')
             present = name in states
             self.temp_cells[name].configure(
                 text='{:.1f}C'.format(temperature)
