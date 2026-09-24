@@ -67,7 +67,7 @@ def device(weather_app):
 def set_weather_state(device, is_safe=True, reasons=None, rain_rate=0.0,
                       wind_speed=3.0, wind_gust=4.0, wind_direction=120.0,
                       temperature=12.0, conditions=None, rain_age=1.0,
-                      wind_age=1.0, detectors=None):
+                      wind_age=1.0, detectors=None, detector_temps=None):
     """Pin the device's published state, so the ASCOM surface can be tested
     without waiting out real settle and latch periods.
 
@@ -90,7 +90,8 @@ def set_weather_state(device, is_safe=True, reasons=None, rain_rate=0.0,
                                       'rain_data': False, 'wind_data': False},
             rain_age_s=rain_age,
             wind_age_s=wind_age,
-            detector_states=detectors or {'H127': 'D', 'H50': 'D', 'ACC': 'D'})
+            detector_states=detectors or {'H127': 'D', 'H50': 'D', 'ACC': 'D'},
+            detector_temps=detector_temps or {'H127': 10.0, 'H50': 12.0, 'ACC': 11.0})
     # The simulated feed would overwrite it on its next tick.
     device._stop.set()
 
