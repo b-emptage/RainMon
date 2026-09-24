@@ -354,7 +354,7 @@ class WeatherWindow(object):
                                               bg=background)
 
         # temperature = state.temperature_c  # old way
-        temperatures = state.detector_temps or {}
+        temperatures = state.temps or {}
         for name in DETECTOR_POSITIONS:
             temperature = temperatures.get(name, '-')
             present = name in states

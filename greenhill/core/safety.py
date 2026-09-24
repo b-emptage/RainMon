@@ -118,7 +118,7 @@ class SafetyState(object):
 
     def __init__(self, is_safe, reasons, rain_rate_mm_h, wind_speed_ms,
                  wind_gust_ms, wind_direction_deg, temperature_c,
-                 conditions, rain_age_s, wind_age_s, detector_states):
+                 conditions, rain_age_s, wind_age_s, detector_states, detector_temps):
         self.is_safe = is_safe
         self.reasons = reasons
         self.rain_rate_mm_h = rain_rate_mm_h
@@ -130,6 +130,7 @@ class SafetyState(object):
         self.rain_age_s = rain_age_s
         self.wind_age_s = wind_age_s
         self.detector_states = detector_states
+        self.detector_temps = detector_temps
 
     def __repr__(self):
         return 'SafetyState(is_safe={}, reasons={!r})'.format(
@@ -198,7 +199,8 @@ class SafetyEvaluator(object):
             conditions={name: c.active for name, c in self._conditions.items()},
             rain_age_s=self.rain.age_s(now),
             wind_age_s=self.wind.age_s(now),
-            detector_states=self.rain.detector_states)
+            detector_states=self.rain.detector_states,
+            detector_temps=self.rain.detector_temps)
 
     def _rain_rate(self):
         # type: () -> float
